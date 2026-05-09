@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coach Everything - 任务陪跑仪表板</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Main Dashboard Container -->
+    <div class="dashboard-container">
+        <!-- Top Navigation Bar -->
+        <nav class="navbar">
+            <div class="navbar-left">
+                <h1 class="navbar-title">🏃 Coach Everything</h1>
+            </div>
+            <div class="navbar-center">
+                <select id="projectSelector" class="project-selector">
+                    <option value="">选择项目 (Select Project)</option>
+                </select>
+            </div>
+            <div class="navbar-right">
+                <button class="nav-button" id="settingsBtn" title="设置">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <button class="nav-button" id="helpBtn" title="帮助">
+                    <i class="fas fa-question-circle"></i>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- Left Sidebar: Pomodoro Timer (Collapsible) -->
+            <aside class="left-panel" id="leftPanel">
+                <div class="panel-header">
+                    <h2>⏱️ 番茄钟</h2>
+                    <button class="expand-btn" id="expandLeftBtn" title="展开">
+                        <i class="fas fa-expand"></i>
+                    </button>
+                </div>
+
+                <div class="pomodoro-widget">
+                    <div class="timer-display" id="timerDisplay">25:00</div>
+                    <div class="timer-status" id="timerStatus">准备就绪</div>
+
+                    <div class="timer-controls">
+                        <button class="btn btn-primary" id="startBtn">开始</button>
+                        <button class="btn btn-secondary" id="pauseBtn">暂停</button>
+                        <button class="btn btn-danger" id="resetBtn">重置</button>
+                    </div>
+
+                    <div class="pomodoro-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">今日完成:</span>
+                            <span class="stat-value" id="todayPomodoros">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">累计耗时:</span>
+                            <span class="stat-value" id="totalHours">0h</span>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-outline" id="viewAnalyticsBtn">
+                        <i class="fas fa-chart-bar"></i> 查看统计
+                    </button>
+                </div>
+
+                <!-- Collapsed time logs -->
+                <div class="recent-logs" id="recentLogs">
+                    <h3>最近记录</h3>
+                    <ul id="logsList" class="logs-list"></ul>
+                </div>
+            </aside>
+
+            <!-- Center Panel: Task Breakdown & Coaching -->
+            <main class="center-panel">
+                <div class="panel-header">
+                    <h2>📋 任务拆分</h2>
+                </div>
+
+                <!-- No Project Selected State -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">📝</div>
+                    <h3>还未选择项目</h3>
+                    <p>请从上方的项目选择器选择一个项目，或创建新项目开始任务拆分。</p>
+                </div>
+
+                <!-- Project Content (Hidden initially) -->
+                <div class="project-content" id="projectContent" style="display: none;">
+                    <!-- Project Overview -->
+                    <section class="section project-overview">
+                        <h3>项目概览</h3>
+                        <div class="overview-info">
+                            <div class="info-item">
+                                <span class="label">项目名:</span>
+                                <span class="value" id="projectName">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">领域:</span>
+                                <span class="value" id="projectDomain">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">完成度:</span>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Task List -->
+                    <section class="section task-section">
+                        <h3>📌 当前任务</h3>
+                        <div class="task-filters">
+                            <button class="filter-btn active" data-filter="all">全部</button>
+                            <button class="filter-btn" data-filter="pending">待办</button>
+                            <button class="filter-btn" data-filter="in_progress">进行中</button>
+                            <button class="filter-btn" data-filter="completed">已完成</button>
+                        </div>
+                        <div class="task-list" id="taskList">
+                            <div class="loading">加载中...</div>
+                        </div>
+                    </section>
+
+                    <!-- Coaching Notes -->
+                    <section class="section coaching-section">
+                        <h3>🤖 Coach 指导</h3>
+                        <div class="coaching-notes" id="coachingNotes">
+                            <div class="loading">加载中...</div>
+                        </div>
+                    </section>
+
+                    <!-- Resources & Tips -->
+                    <section class="section resources-section">
+                        <h3>🔗 资源与技巧</h3>
+                        <div class="resources-list" id="resourcesList">
+                            <div class="empty-message">暂无资源链接</div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+
+            <!-- Right Panel: File Browser & Workspace -->
+            <aside class="right-panel">
+                <div class="panel-header">
+                    <h2>📁 工作区文件</h2>
+                    <button class="expand-btn" id="expandRightBtn" title="展开">
+                        <i class="fas fa-expand"></i>
+                    </button>
+                </div>
+
+                <div class="workspace-browser" id="workspaceBrowser">
+                    <div class="empty-message">选择项目后显示工作区</div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ 设置</h2>
+                <button class="close-btn" id="closeSettingsBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Theme Settings -->
+                <div class="settings-section">
+                    <h3>主题设置</h3>
+                    <div class="setting-item">
+                        <label for="themeToggle">深色模式</label>
+                        <input type="checkbox" id="themeToggle" class="toggle-switch">
+                    </div>
+                </div>
+
+                <!-- Display Settings -->
+                <div class="settings-section">
+                    <h3>显示设置</h3>
+                    <div class="setting-item">
+                        <label for="fontSizeSlider">字体大小: <span id="fontSizeValue">14</span>px</label>
+                        <input type="range" id="fontSizeSlider" min="12" max="18" value="14" class="slider">
+                    </div>
+                </div>
+
+                <!-- Language Settings -->
+                <div class="settings-section">
+                    <h3>语言设置</h3>
+                    <div class="setting-item">
+                        <label for="languageSelect">选择语言</label>
+                        <select id="languageSelect" class="select-input">
+                            <option value="zh">中文 (Chinese)</option>
+                            <option value="en">English</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- LLM Settings -->
+                <div class="settings-section">
+                    <h3>LLM 配置</h3>
+                    <div class="setting-item">
+                        <label for="llmProviderSelect">LLM 提供商</label>
+                        <select id="llmProviderSelect" class="select-input">
+                            <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="openai">OpenAI (GPT)</option>
+                            <option value="custom">自定义</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="llmModelSelect">模型</label>
+                        <select id="llmModelSelect" class="select-input">
+                            <option value="claude-3-haiku">Claude 3 Haiku</option>
+                            <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+                            <option value="gpt-4">GPT-4</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- MCP Settings -->
+                <div class="settings-section">
+                    <h3>MCP 配置</h3>
+                    <div class="setting-item">
+                        <label for="mcpStatus">MCP 状态</label>
+                        <div class="status-indicator">
+                            <span id="mcpStatus" class="status-dot offline"></span>
+                            <span id="mcpStatusText">未连接</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelSettingsBtn">取消</button>
+                <button class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analytics Modal (Expanded View) -->
+    <div class="modal" id="analyticsModal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>📊 详细统计</h2>
+                <button class="close-btn" id="closeAnalyticsBtn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="analytics-grid">
+                    <!-- Gantt Chart -->
+                    <section class="analytics-section">
+                        <h3>甘特图</h3>
+                        <div class="gantt-chart" id="ganttChart">
+                            <div class="loading">生成中...</div>
+                        </div>
+                    </section>
+
+                    <!-- Time Distribution Pie Chart -->
+                    <section class="analytics-section">
+                        <h3>时间分布</h3>
+                        <div class="pie-chart" id="pieChart">
+                            <canvas id="pieChartCanvas"></canvas>
+                        </div>
+                    </section>
+
+                    <!-- Statistics Table -->
+                    <section class="analytics-section full-width">
+                        <h3>统计数据</h3>
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>指标</th>
+                                    <th>数值</th>
+                                </tr>
+                            </thead>
+                            <tbody id="statsTableBody">
+                                <tr>
+                                    <td>总计小时数</td>
+                                    <td id="totalHoursStat">0h</td>
+                                </tr>
+                                <tr>
+                                    <td>平均任务耗时</td>
+                                    <td id="avgDurationStat">0min</td>
+                                </tr>
+                                <tr>
+                                    <td>番茄钟总数</td>
+                                    <td id="pomodorosCountStat">0</td>
+                                </tr>
+                                <tr>
+                                    <td>按时完成率</td>
+                                    <td id="onTimePercentStat">0%</td>
+                                </tr>
+                                <tr>
+                                    <td>最快任务</td>
+                                    <td id="fastestTaskStat">-</td>
+                                </tr>
+                                <tr>
+                                    <td>最慢任务</td>
+                                    <td id="slowestTaskStat">-</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
