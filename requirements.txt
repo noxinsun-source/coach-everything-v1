@@ -1,0 +1,29 @@
+# Coach Everything - Core Dependencies
+
+# HTTP and Web
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+feedparser>=6.0.0
+arxiv>=1.4.0
+
+# CLI and Output
+click>=8.0.0
+rich>=13.0.0
+
+# Data Validation and Configuration
+pydantic>=2.0.0
+PyYAML>=6.0
+
+# AI/LLM Integration
+anthropic>=0.7.0
+
+# Optional: Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Optional: Development
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+isort>=5.12.0

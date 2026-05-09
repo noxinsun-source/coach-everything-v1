@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coach-everything"
+version = "1.0.0"
+description = "Universal Task Breakdown & AI Coaching Agent for ADHD and executive function support"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Coach Everything Contributors", email = "your.email@example.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Healthcare Industry",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Education",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "requests>=2.28.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "feedparser>=6.0.0",
+    "beautifulsoup4>=4.11.0",
+    "arxiv>=1.4.0",
+    "anthropic>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "isort>=5.12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/coach-everything"
+Documentation = "https://github.com/yourusername/coach-everything/docs"
+Repository = "https://github.com/yourusername/coach-everything"
+"Bug Tracker" = "https://github.com/yourusername/coach-everything/issues"
+
+[project.scripts]
+coach = "coach.main:cli"
+
+[tool.setuptools]
+packages = ["coach"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py10', 'py11', 'py12']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip_gitignore = true
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=coach --cov-report=html --cov-report=term-missing"
