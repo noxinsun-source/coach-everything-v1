@@ -72,8 +72,34 @@ class CoachAgentConfig(BaseModel):
     )
 
 
+class LLMConfig(BaseModel):
+    """LLM Base Model Configuration"""
+    provider: str = Field(
+        default="anthropic",
+        description="LLM provider: anthropic, openai, custom"
+    )
+    model_name: str = Field(
+        default="claude-3-haiku-20240307",
+        description="Model name (Claude, GPT-4, etc.)"
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key for the provider"
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Custom base URL for API (optional)"
+    )
+
+
 class CoachConfig(BaseModel):
     """Main configuration for Coach Everything"""
+    # LLM Configuration
+    llm: LLMConfig = Field(
+        default_factory=LLMConfig,
+        description="Large Language Model configuration"
+    )
+
     # Paths
     obsidian_vault_path: str = Field(
         default=str(Path.home() / "Documents" / "Obsidian Vault"),
