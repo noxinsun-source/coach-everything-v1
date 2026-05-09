@@ -76,70 +76,125 @@
                 </div>
             </aside>
 
-            <!-- Center Panel: Task Breakdown & Coaching -->
+            <!-- Center Panel: Task Breakdown & Chat -->
             <main class="center-panel">
-                <div class="panel-header">
-                    <h2>📋 任务拆分</h2>
+                <div class="panel-header center-panel-header">
+                    <div class="center-tabs" role="tablist">
+                        <button class="tab-btn active" id="tabTasksBtn" role="tab" aria-selected="true">📋 任务拆分</button>
+                        <button class="tab-btn" id="tabChatBtn" role="tab" aria-selected="false">💬 对话</button>
+                    </div>
                 </div>
 
-                <!-- No Project Selected State -->
-                <div class="empty-state" id="emptyState">
-                    <div class="empty-icon">📝</div>
-                    <h3>还未选择项目</h3>
-                    <p>请从上方的项目选择器选择一个项目，或创建新项目开始任务拆分。</p>
-                </div>
+                <div class="center-view" id="tasksView">
+                    <!-- No Project Selected State -->
+                    <div class="empty-state" id="emptyState">
+                        <div class="empty-icon">📝</div>
+                        <h3>还未选择项目</h3>
+                        <p>请从上方的项目选择器选择一个项目，或创建新项目开始任务拆分。</p>
+                    </div>
 
-                <!-- Project Content (Hidden initially) -->
-                <div class="project-content" id="projectContent" style="display: none;">
-                    <!-- Project Overview -->
-                    <section class="section project-overview">
-                        <h3>项目概览</h3>
-                        <div class="overview-info">
-                            <div class="info-item">
-                                <span class="label">项目名:</span>
-                                <span class="value" id="projectName">-</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="label">领域:</span>
-                                <span class="value" id="projectDomain">-</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="label">完成度:</span>
-                                <div class="progress-bar">
-                                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    <!-- Project Content (Hidden initially) -->
+                    <div class="project-content" id="projectContent" style="display: none;">
+                        <!-- Project Overview -->
+                        <section class="section project-overview">
+                            <h3>项目概览</h3>
+                            <div class="overview-info">
+                                <div class="info-item">
+                                    <span class="label">项目名:</span>
+                                    <span class="value" id="projectName">-</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="label">领域:</span>
+                                    <span class="value" id="projectDomain">-</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="label">完成度:</span>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </section>
+                        </section>
 
-                    <!-- Task List -->
-                    <section class="section task-section">
-                        <h3>📌 当前任务</h3>
-                        <div class="task-filters">
-                            <button class="filter-btn active" data-filter="all">全部</button>
-                            <button class="filter-btn" data-filter="pending">待办</button>
-                            <button class="filter-btn" data-filter="in_progress">进行中</button>
-                            <button class="filter-btn" data-filter="completed">已完成</button>
-                        </div>
-                        <div class="task-list" id="taskList">
-                            <div class="loading">加载中...</div>
-                        </div>
-                    </section>
+                        <!-- Task List -->
+                        <section class="section task-section">
+                            <h3>📌 当前任务</h3>
+                            <div class="task-filters">
+                                <button class="filter-btn active" data-filter="all">全部</button>
+                                <button class="filter-btn" data-filter="pending">待办</button>
+                                <button class="filter-btn" data-filter="in_progress">进行中</button>
+                                <button class="filter-btn" data-filter="completed">已完成</button>
+                            </div>
+                            <div class="task-list" id="taskList">
+                                <div class="loading">加载中...</div>
+                            </div>
+                        </section>
 
-                    <!-- Coaching Notes -->
-                    <section class="section coaching-section">
-                        <h3>🤖 Coach 指导</h3>
-                        <div class="coaching-notes" id="coachingNotes">
-                            <div class="loading">加载中...</div>
-                        </div>
-                    </section>
+                        <!-- Coaching Notes -->
+                        <section class="section coaching-section">
+                            <h3>🤖 Coach 指导</h3>
+                            <div class="coaching-notes" id="coachingNotes">
+                                <div class="loading">加载中...</div>
+                            </div>
+                        </section>
 
-                    <!-- Resources & Tips -->
-                    <section class="section resources-section">
-                        <h3>🔗 资源与技巧</h3>
-                        <div class="resources-list" id="resourcesList">
-                            <div class="empty-message">暂无资源链接</div>
+                        <!-- Resources & Tips -->
+                        <section class="section resources-section">
+                            <h3>🔗 资源与技巧</h3>
+                            <div class="resources-list" id="resourcesList">
+                                <div class="empty-message">暂无资源链接</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <div class="center-view" id="chatView" style="display: none;">
+                    <section class="section chat-section">
+                        <div class="chat-controls">
+                            <div class="chat-control">
+                                <label for="chatProviderSelect">提供商</label>
+                                <select id="chatProviderSelect" class="select-input">
+                                    <option value="claude_code">Claude Code (本地 CLI)</option>
+                                    <option value="codex">Codex (本地 CLI)</option>
+                                </select>
+                            </div>
+                            <div class="chat-control">
+                                <label for="chatModelInput">模型</label>
+                                <input id="chatModelInput" class="text-input" placeholder="例如：claude-3-5-sonnet 或 gpt-4.1">
+                            </div>
+                            <div class="chat-control">
+                                <label for="chatModeSelect">模式</label>
+                                <select id="chatModeSelect" class="select-input">
+                                    <option value="task_breakdown">任务拆分</option>
+                                    <option value="coding">编程</option>
+                                    <option value="research">研究</option>
+                                    <option value="custom">自定义</option>
+                                </select>
+                            </div>
+                            <div class="chat-control chat-control-wide">
+                                <label for="chatSystemPromptInput">自定义系统提示</label>
+                                <input id="chatSystemPromptInput" class="text-input" placeholder="可选：补充约束/风格/偏好">
+                            </div>
+                            <div class="chat-control">
+                                <label for="chatContextLimit">上下文(字符)</label>
+                                <input type="number" id="chatContextLimit" class="text-input" value="8000" min="500" step="500">
+                            </div>
+                            <div class="chat-control">
+                                <button class="btn btn-secondary" id="chatClearBtn">清空</button>
+                            </div>
                         </div>
+
+                        <div class="chat-messages" id="chatMessages"></div>
+
+                        <div class="chat-composer">
+                            <textarea id="chatInput" class="chat-input" rows="3" placeholder="输入你的问题..."></textarea>
+                            <button class="btn btn-primary" id="chatSendBtn">发送</button>
+                        </div>
+
+                        <details class="chat-context" id="chatContextDetails">
+                            <summary>查看将发送的上下文</summary>
+                            <pre class="chat-context-pre" id="chatContextPreview"></pre>
+                        </details>
                     </section>
                 </div>
             </main>
@@ -204,6 +259,8 @@
                     <div class="setting-item">
                         <label for="llmProviderSelect">LLM 提供商</label>
                         <select id="llmProviderSelect" class="select-input">
+                            <option value="claude_code">Claude Code (本地 CLI)</option>
+                            <option value="codex">Codex (本地 CLI)</option>
                             <option value="anthropic">Anthropic (Claude)</option>
                             <option value="openai">OpenAI (GPT)</option>
                             <option value="custom">自定义</option>
@@ -216,6 +273,26 @@
                             <option value="claude-3-sonnet">Claude 3 Sonnet</option>
                             <option value="gpt-4">GPT-4</option>
                         </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="llmBaseUrlInput">Base URL（可选）</label>
+                        <input id="llmBaseUrlInput" class="text-input" placeholder="例如：https://api.openai.com/v1 或兼容地址">
+                    </div>
+                    <div class="setting-item">
+                        <label for="llmApiKeyInput">API Key（可选，本地加密保存）</label>
+                        <input id="llmApiKeyInput" class="text-input" type="password" placeholder="留空表示不修改；输入新 key 将覆盖">
+                    </div>
+                    <div class="setting-item">
+                        <label for="cliClaudeCommandInput">Claude CLI 命令模板</label>
+                        <input id="cliClaudeCommandInput" class="text-input" placeholder="例如：claude --model {model}">
+                    </div>
+                    <div class="setting-item">
+                        <label for="cliCodexCommandInput">Codex CLI 命令模板</label>
+                        <input id="cliCodexCommandInput" class="text-input" placeholder="例如：codex --model {model}">
+                    </div>
+                    <div class="setting-item">
+                        <label for="cliTimeoutInput">CLI 超时(秒)</label>
+                        <input id="cliTimeoutInput" class="text-input" type="number" min="5" step="5" value="120">
                     </div>
                 </div>
 

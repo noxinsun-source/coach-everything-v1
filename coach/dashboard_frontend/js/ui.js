@@ -6,6 +6,7 @@
 class DashboardUI {
     constructor() {
         this.currentProjectId = null;
+        this.chatHistory = [];
         this.pomodoroWebSocket = null;
         this.timerInterval = null;
         this.timeRemaining = 25 * 60; // 25 minutes in seconds
@@ -30,6 +31,24 @@ class DashboardUI {
             leftPanel: document.getElementById('leftPanel'),
             centerPanel: document.getElementById('centerPanel'),
             rightPanel: document.getElementById('rightPanel'),
+
+            // Center tabs
+            tabTasksBtn: document.getElementById('tabTasksBtn'),
+            tabChatBtn: document.getElementById('tabChatBtn'),
+            tasksView: document.getElementById('tasksView'),
+            chatView: document.getElementById('chatView'),
+
+            // Chat
+            chatProviderSelect: document.getElementById('chatProviderSelect'),
+            chatModelInput: document.getElementById('chatModelInput'),
+            chatModeSelect: document.getElementById('chatModeSelect'),
+            chatSystemPromptInput: document.getElementById('chatSystemPromptInput'),
+            chatContextLimit: document.getElementById('chatContextLimit'),
+            chatClearBtn: document.getElementById('chatClearBtn'),
+            chatMessages: document.getElementById('chatMessages'),
+            chatInput: document.getElementById('chatInput'),
+            chatSendBtn: document.getElementById('chatSendBtn'),
+            chatContextPreview: document.getElementById('chatContextPreview'),
 
             // Timer
             timerDisplay: document.getElementById('timerDisplay'),
@@ -80,6 +99,11 @@ class DashboardUI {
             languageSelect: document.getElementById('languageSelect'),
             llmProviderSelect: document.getElementById('llmProviderSelect'),
             llmModelSelect: document.getElementById('llmModelSelect'),
+            llmBaseUrlInput: document.getElementById('llmBaseUrlInput'),
+            llmApiKeyInput: document.getElementById('llmApiKeyInput'),
+            cliClaudeCommandInput: document.getElementById('cliClaudeCommandInput'),
+            cliCodexCommandInput: document.getElementById('cliCodexCommandInput'),
+            cliTimeoutInput: document.getElementById('cliTimeoutInput'),
             mcpStatus: document.getElementById('mcpStatus'),
             mcpStatusText: document.getElementById('mcpStatusText'),
 
@@ -98,6 +122,41 @@ class DashboardUI {
                 this.loadProject(projectId);
             }
         });
+
+        if (this.elements.tabTasksBtn && this.elements.tabChatBtn) {
+            this.elements.tabTasksBtn.addEventListener('click', () => this.showTasksTab());
+            this.elements.tabChatBtn.addEventListener('click', () => this.showChatTab());
+        }
+
+        if (this.elements.chatSendBtn) {
+            this.elements.chatSendBtn.addEventListener('click', () => this.sendChat());
+        }
+        if (this.elements.chatClearBtn) {
+            this.elements.chatClearBtn.addEventListener('click', () => this.clearChat());
+        }
+        if (this.elements.chatInput) {
+            this.elements.chatInput.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    this.sendChat();
+                }
+            });
+        }
+        if (this.elements.chatProviderSelect) {
+            this.elements.chatProviderSelect.addEventListener('change', () => this.updateChatContextPreview());
+        }
+        if (this.elements.chatModelInput) {
+            this.elements.chatModelInput.addEventListener('input', () => this.updateChatContextPreview());
+        }
+        if (this.elements.chatModeSelect) {
+            this.elements.chatModeSelect.addEventListener('change', () => this.updateChatContextPreview());
+        }
+        if (this.elements.chatSystemPromptInput) {
+            this.elements.chatSystemPromptInput.addEventListener('input', () => this.updateChatContextPreview());
+        }
+        if (this.elements.chatContextLimit) {
+            this.elements.chatContextLimit.addEventListener('input', () => this.updateChatContextPreview());
+        }
 
         // Timer controls
         this.elements.startBtn.addEventListener('click', () => this.startTimer());
@@ -209,6 +268,99 @@ class DashboardUI {
         } catch (error) {
             console.error('Failed to load project:', error);
             this.showNotification('Failed to load project', 'error');
+        }
+    }
+
+    showTasksTab() {
+        if (!this.elements.tasksView || !this.elements.chatView) return;
+        this.elements.tasksView.style.display = 'block';
+        this.elements.chatView.style.display = 'none';
+        if (this.elements.tabTasksBtn && this.elements.tabChatBtn) {
+            this.elements.tabTasksBtn.classList.add('active');
+            this.elements.tabChatBtn.classList.remove('active');
+            this.elements.tabTasksBtn.setAttribute('aria-selected', 'true');
+            this.elements.tabChatBtn.setAttribute('aria-selected', 'false');
+        }
+    }
+
+    showChatTab() {
+        if (!this.elements.tasksView || !this.elements.chatView) return;
+        this.elements.tasksView.style.display = 'none';
+        this.elements.chatView.style.display = 'block';
+        if (this.elements.tabTasksBtn && this.elements.tabChatBtn) {
+            this.elements.tabChatBtn.classList.add('active');
+            this.elements.tabTasksBtn.classList.remove('active');
+            this.elements.tabChatBtn.setAttribute('aria-selected', 'true');
+            this.elements.tabTasksBtn.setAttribute('aria-selected', 'false');
+        }
+        this.updateChatContextPreview();
+        if (this.elements.chatInput) {
+            this.elements.chatInput.focus();
+        }
+    }
+
+    clearChat() {
+        this.chatHistory = [];
+        if (this.elements.chatMessages) {
+            this.elements.chatMessages.innerHTML = '';
+        }
+        this.updateChatContextPreview();
+    }
+
+    appendChatMessage(role, content) {
+        this.chatHistory.push({ role, content });
+        if (!this.elements.chatMessages) return;
+        const el = document.createElement('div');
+        el.className = `chat-message ${role}`;
+        el.textContent = content;
+        this.elements.chatMessages.appendChild(el);
+        this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+    }
+
+    buildChatPayload() {
+        const provider = this.elements.chatProviderSelect?.value || this.elements.llmProviderSelect?.value || 'claude_code';
+        const modelInput = (this.elements.chatModelInput?.value || '').trim();
+        const model = modelInput || this.elements.llmModelSelect?.value || null;
+        const mode = this.elements.chatModeSelect?.value || 'task_breakdown';
+        const system_prompt = (this.elements.chatSystemPromptInput?.value || '').trim() || null;
+        const limit = parseInt(this.elements.chatContextLimit?.value || '8000', 10) || 8000;
+
+        let total = 0;
+        const selected = [];
+        for (let i = this.chatHistory.length - 1; i >= 0; i--) {
+            const m = this.chatHistory[i];
+            const size = (m.content || '').length;
+            if (selected.length > 0 && total + size > limit) break;
+            selected.unshift({ role: m.role, content: m.content });
+            total += size;
+        }
+
+        return { provider, model, mode, system_prompt, messages: selected };
+    }
+
+    updateChatContextPreview() {
+        if (!this.elements.chatContextPreview) return;
+        const payload = this.buildChatPayload();
+        this.elements.chatContextPreview.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    async sendChat() {
+        if (!this.elements.chatInput) return;
+        const text = (this.elements.chatInput.value || '').trim();
+        if (!text) return;
+        this.elements.chatInput.value = '';
+        this.appendChatMessage('user', text);
+        this.updateChatContextPreview();
+
+        try {
+            const payload = this.buildChatPayload();
+            const res = await api.chat(payload);
+            this.appendChatMessage('assistant', res.message.content || '');
+            this.updateChatContextPreview();
+        } catch (error) {
+            console.error('Chat failed:', error);
+            this.appendChatMessage('assistant', `请求失败：${error.message || error}`);
+            this.showNotification('对话请求失败', 'error');
         }
     }
 
@@ -549,11 +701,23 @@ class DashboardUI {
             language: this.elements.languageSelect.value,
             llm_provider: this.elements.llmProviderSelect.value,
             llm_model: this.elements.llmModelSelect.value,
+            llm_base_url: (this.elements.llmBaseUrlInput?.value || '').trim() || null,
+            cli_claude_command: (this.elements.cliClaudeCommandInput?.value || '').trim() || null,
+            cli_codex_command: (this.elements.cliCodexCommandInput?.value || '').trim() || null,
+            cli_timeout_seconds: parseInt(this.elements.cliTimeoutInput?.value || '120', 10) || 120,
         };
+
+        const apiKey = (this.elements.llmApiKeyInput?.value || '').trim();
+        if (apiKey) {
+            settings.llm_api_key = apiKey;
+        }
 
         try {
             await api.updateSettings(settings);
             this.showNotification('设置已保存', 'success');
+            if (this.elements.llmApiKeyInput) {
+                this.elements.llmApiKeyInput.value = '';
+            }
             this.closeSettings();
         } catch (error) {
             console.error('Failed to save settings:', error);
@@ -571,10 +735,37 @@ class DashboardUI {
             this.elements.languageSelect.value = settings.language;
             this.elements.llmProviderSelect.value = settings.llm_provider;
             this.elements.llmModelSelect.value = settings.llm_model;
+            if (this.elements.llmBaseUrlInput) {
+                this.elements.llmBaseUrlInput.value = settings.llm_base_url || '';
+            }
+            if (this.elements.cliClaudeCommandInput) {
+                this.elements.cliClaudeCommandInput.value = settings.cli_claude_command || '';
+            }
+            if (this.elements.cliCodexCommandInput) {
+                this.elements.cliCodexCommandInput.value = settings.cli_codex_command || '';
+            }
+            if (this.elements.cliTimeoutInput) {
+                this.elements.cliTimeoutInput.value = settings.cli_timeout_seconds || 120;
+            }
+            if (this.elements.llmApiKeyInput) {
+                this.elements.llmApiKeyInput.placeholder = settings.has_llm_api_key
+                    ? '已保存（本地加密）；输入新 key 将覆盖'
+                    : '未设置；输入 key 将保存';
+            }
+
+            if (this.elements.chatProviderSelect) {
+                if (settings.llm_provider) {
+                    this.elements.chatProviderSelect.value = settings.llm_provider;
+                }
+            }
+            if (this.elements.chatModelInput) {
+                this.elements.chatModelInput.value = settings.llm_model || '';
+            }
 
             // Apply theme and font size
             this.toggleTheme(settings.theme === 'dark');
             this.changeFontSize(settings.font_size);
+            this.updateChatContextPreview();
         } catch (error) {
             console.error('Failed to load settings:', error);
         }

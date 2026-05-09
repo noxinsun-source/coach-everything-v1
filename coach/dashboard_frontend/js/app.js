@@ -94,7 +94,7 @@ function initializeDashboard() {
  */
 async function checkAPIConnection() {
     try {
-        const response = await fetch('http://127.0.0.1:8000/api/projects');
+        const response = await fetch('/api/projects');
         if (response.ok) {
             console.log('✅ API backend connected');
         } else {
@@ -125,7 +125,7 @@ function showAPIWarning() {
         align-items: center;
     `;
     warning.innerHTML = `
-        <span>⚠️ API backend not accessible. Make sure the backend is running on http://127.0.0.1:8000</span>
+        <span>⚠️ API backend not accessible. Make sure the backend is running</span>
         <button style="background: none; border: none; cursor: pointer; font-size: 1.2rem; color: #78350f;">×</button>
     `;
 

@@ -4,8 +4,8 @@
  */
 
 class CoachAPI {
-    constructor(baseURL = 'http://127.0.0.1:8000') {
-        this.baseURL = baseURL;
+    constructor(baseURL = '') {
+        this.baseURL = baseURL || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
         this.defaultHeaders = {
             'Content-Type': 'application/json',
         };
@@ -126,13 +126,22 @@ class CoachAPI {
         });
     }
 
+    async chat(chatData) {
+        return this.request('/api/chat', {
+            method: 'POST',
+            body: JSON.stringify(chatData),
+        });
+    }
+
     // ========== WebSocket Methods ==========
 
     /**
      * Connect to Pomodoro WebSocket
      */
     connectPomodoroWebSocket(projectId, handlers = {}) {
-        const wsUrl = `ws://127.0.0.1:8000/ws/pomodoro/${projectId}`;
+        const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const host = typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8000';
+        const wsUrl = `${proto}://${host}/ws/pomodoro/${projectId}`;
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {

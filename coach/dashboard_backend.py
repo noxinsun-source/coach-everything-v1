@@ -10,11 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Column, String, DateTime, Integer, Float, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import text
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
 import json
 import os
+import shlex
+import subprocess
 from pathlib import Path
 
 # Initialize FastAPI
@@ -111,10 +114,69 @@ class UserSettings(Base):
     llm_provider = Column(String, default="anthropic")
     llm_model = Column(String, default="claude-3-haiku-20240307")
     llm_api_key = Column(String, nullable=True)
+    llm_api_key_encrypted = Column(String, nullable=True)
+    llm_base_url = Column(String, nullable=True)
+    cli_claude_command = Column(String, nullable=True)
+    cli_codex_command = Column(String, nullable=True)
+    cli_timeout_seconds = Column(Integer, nullable=True)
 
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_user_settings_schema():
+    desired = {
+        "llm_api_key_encrypted": "TEXT",
+        "llm_base_url": "TEXT",
+        "cli_claude_command": "TEXT",
+        "cli_codex_command": "TEXT",
+        "cli_timeout_seconds": "INTEGER",
+    }
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
+        existing = {row[1] for row in rows}
+        for col, col_type in desired.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE user_settings ADD COLUMN {col} {col_type}"))
+
+
+_ensure_user_settings_schema()
+
+
+def _get_secret_key_path() -> Path:
+    return db_dir / "llm_secret.key"
+
+
+def _get_fernet():
+    try:
+        from cryptography.fernet import Fernet
+    except Exception as e:
+        raise RuntimeError("cryptography_not_installed") from e
+
+    key_path = _get_secret_key_path()
+    if not key_path.exists():
+        key = Fernet.generate_key()
+        key_path.write_bytes(key)
+        try:
+            os.chmod(key_path, 0o600)
+        except Exception:
+            pass
+    return Fernet(key_path.read_bytes())
+
+
+def _encrypt_optional(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    f = _get_fernet()
+    return f.encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_optional(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    f = _get_fernet()
+    return f.decrypt(value.encode("utf-8")).decode("utf-8")
 
 
 # Pydantic Models
@@ -167,6 +229,85 @@ class DashboardDataResponse(BaseModel):
     time_stats: TimeStatsResponse
     recent_coaching_notes: List[dict]
     gantt_data: dict
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    mode: str = "task_breakdown"
+    messages: List[ChatMessage]
+    system_prompt: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    message: ChatMessage
+
+
+class _SafeFormatDict(dict):
+    def __missing__(self, key):
+        return ""
+
+
+def _build_system_prompt(mode: str, custom: Optional[str]) -> str:
+    if mode == "coding":
+        base = "你是一个专业的代码助手。回答要直接、可执行，并在需要时先问清关键信息。"
+    elif mode == "research":
+        base = "你是一个研究助理。先澄清目标，再给出结构化结论与可验证的引用/下一步。"
+    elif mode == "custom":
+        base = custom or ""
+    else:
+        base = "你是一个任务拆分教练。目标是把用户的模糊目标拆成可执行的下一步，并在不确定时提出澄清问题。"
+
+    if custom and mode != "custom":
+        return f"{base}\n\n补充要求：{custom}"
+    return base
+
+
+def _render_prompt(system_prompt: str, messages: List[ChatMessage]) -> str:
+    parts = []
+    if system_prompt:
+        parts.append(f"SYSTEM: {system_prompt}".strip())
+    for m in messages:
+        role = (m.role or "").strip().upper()
+        content = (m.content or "").strip()
+        if not content:
+            continue
+        parts.append(f"{role}: {content}")
+    parts.append("ASSISTANT:")
+    return "\n\n".join(parts).strip() + "\n"
+
+
+def _run_cli(command_template: str, model: Optional[str], prompt: str, timeout_seconds: int) -> str:
+    template = (command_template or "").strip()
+    if not template:
+        raise RuntimeError("cli_command_not_configured")
+
+    cmd_str = template.format_map(_SafeFormatDict(model=model or ""))
+    argv = shlex.split(cmd_str)
+    if not argv:
+        raise RuntimeError("cli_command_not_configured")
+
+    proc = subprocess.run(
+        argv,
+        input=prompt.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_seconds,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"cli_failed:{proc.returncode}:{err[:800]}")
+
+    out = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+    return out
 
 
 # Dependency
@@ -352,12 +493,34 @@ async def get_settings(db: Session = Depends(get_db)):
         settings = UserSettings(id="default")
         db.add(settings)
         db.commit()
+        db.refresh(settings)
+
+    changed = False
+    if not settings.cli_claude_command:
+        settings.cli_claude_command = "claude --model {model}"
+        changed = True
+    if not settings.cli_codex_command:
+        settings.cli_codex_command = "codex --model {model}"
+        changed = True
+    if not settings.cli_timeout_seconds:
+        settings.cli_timeout_seconds = 120
+        changed = True
+    if changed:
+        db.add(settings)
+        db.commit()
+
+    has_key = bool(settings.llm_api_key_encrypted or settings.llm_api_key)
     return {
         "theme": settings.theme,
         "font_size": settings.font_size,
         "language": settings.language,
         "llm_provider": settings.llm_provider,
-        "llm_model": settings.llm_model
+        "llm_model": settings.llm_model,
+        "llm_base_url": settings.llm_base_url,
+        "has_llm_api_key": has_key,
+        "cli_claude_command": settings.cli_claude_command,
+        "cli_codex_command": settings.cli_codex_command,
+        "cli_timeout_seconds": settings.cli_timeout_seconds,
     }
 
 
@@ -368,13 +531,81 @@ async def update_settings(settings_data: dict, db: Session = Depends(get_db)):
     if not settings:
         settings = UserSettings(id="default")
 
+    api_key_value = None
+    if "llm_api_key" in settings_data:
+        api_key_value = settings_data.get("llm_api_key")
+        settings_data = dict(settings_data)
+        settings_data.pop("llm_api_key", None)
+
     for key, value in settings_data.items():
         if hasattr(settings, key):
             setattr(settings, key, value)
 
+    if api_key_value is not None:
+        try:
+            if api_key_value:
+                settings.llm_api_key_encrypted = _encrypt_optional(str(api_key_value))
+                settings.llm_api_key = None
+            else:
+                settings.llm_api_key_encrypted = None
+                settings.llm_api_key = None
+        except RuntimeError as e:
+            if str(e) == "cryptography_not_installed":
+                raise HTTPException(status_code=500, detail="cryptography not installed")
+            raise
+
     db.add(settings)
     db.commit()
     return {"status": "updated"}
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest, db: Session = Depends(get_db)):
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    if not settings:
+        settings = UserSettings(id="default")
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+
+    provider = (req.provider or settings.llm_provider or "").strip()
+    model = (req.model or settings.llm_model or "").strip() or None
+    timeout_seconds = int(settings.cli_timeout_seconds or 120)
+
+    system_prompt = _build_system_prompt(req.mode, req.system_prompt)
+    prompt = _render_prompt(system_prompt, req.messages)
+
+    try:
+        if provider in ("claude_code", "claude"):
+            out = _run_cli(settings.cli_claude_command or "claude --model {model}", model, prompt, timeout_seconds)
+        elif provider in ("codex", "codex_cli"):
+            out = _run_cli(settings.cli_codex_command or "codex --model {model}", model, prompt, timeout_seconds)
+        elif provider == "mock":
+            last_user = ""
+            for m in reversed(req.messages):
+                if m.role == "user":
+                    last_user = m.content
+                    break
+            out = f"mock: {last_user}".strip()
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=424, detail=f"CLI not found for provider: {provider}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="CLI timeout")
+    except RuntimeError as e:
+        msg = str(e)
+        if msg == "cli_command_not_configured":
+            raise HTTPException(status_code=400, detail="CLI command not configured")
+        if msg.startswith("cli_failed:"):
+            raise HTTPException(status_code=500, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
+
+    return ChatResponse(
+        provider=provider,
+        model=model,
+        message=ChatMessage(role="assistant", content=out),
+    )
 
 
 @app.websocket("/ws/pomodoro/{project_id}")
