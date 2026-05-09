@@ -3,9 +3,10 @@ Coach Everything Dashboard Backend
 FastAPI server for dashboard functionality
 """
 
-from fastapi import FastAPI, WebSocket, HTTPException, Depends, StaticFiles
+from fastapi import FastAPI, WebSocket, HTTPException, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Column, String, DateTime, Integer, Float, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -35,7 +36,9 @@ if static_dir.exists():
     app.mount("/js", StaticFiles(directory=str(static_dir / "js")), name="js")
 
 # Database Setup
-DATABASE_URL = f"sqlite:///{Path.home()}/.coach/coach_dashboard.db"
+db_dir = Path.home() / ".coach"
+db_dir.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = f"sqlite:///{db_dir}/coach_dashboard.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
