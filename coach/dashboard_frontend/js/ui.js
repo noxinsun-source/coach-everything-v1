@@ -44,6 +44,9 @@ class DashboardUI {
             chatModeSelect: document.getElementById('chatModeSelect'),
             chatSystemPromptInput: document.getElementById('chatSystemPromptInput'),
             chatContextLimit: document.getElementById('chatContextLimit'),
+            chatSettingsBtn: document.getElementById('chatSettingsBtn'),
+            chatSettingsPanel: document.getElementById('chatSettingsPanel'),
+            chatModelSummary: document.getElementById('chatModelSummary'),
             chatClearBtn: document.getElementById('chatClearBtn'),
             chatMessages: document.getElementById('chatMessages'),
             chatInput: document.getElementById('chatInput'),
@@ -134,6 +137,9 @@ class DashboardUI {
         if (this.elements.chatClearBtn) {
             this.elements.chatClearBtn.addEventListener('click', () => this.clearChat());
         }
+        if (this.elements.chatSettingsBtn) {
+            this.elements.chatSettingsBtn.addEventListener('click', () => this.toggleChatSettings());
+        }
         if (this.elements.chatInput) {
             this.elements.chatInput.addEventListener('keydown', (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -143,13 +149,22 @@ class DashboardUI {
             });
         }
         if (this.elements.chatProviderSelect) {
-            this.elements.chatProviderSelect.addEventListener('change', () => this.updateChatContextPreview());
+            this.elements.chatProviderSelect.addEventListener('change', () => {
+                this.updateChatModelSummary();
+                this.updateChatContextPreview();
+            });
         }
         if (this.elements.chatModelInput) {
-            this.elements.chatModelInput.addEventListener('input', () => this.updateChatContextPreview());
+            this.elements.chatModelInput.addEventListener('input', () => {
+                this.updateChatModelSummary();
+                this.updateChatContextPreview();
+            });
         }
         if (this.elements.chatModeSelect) {
-            this.elements.chatModeSelect.addEventListener('change', () => this.updateChatContextPreview());
+            this.elements.chatModeSelect.addEventListener('change', () => {
+                this.updateChatModelSummary();
+                this.updateChatContextPreview();
+            });
         }
         if (this.elements.chatSystemPromptInput) {
             this.elements.chatSystemPromptInput.addEventListener('input', () => this.updateChatContextPreview());
@@ -307,12 +322,115 @@ class DashboardUI {
         this.updateChatContextPreview();
     }
 
+    toggleChatSettings() {
+        if (!this.elements.chatSettingsPanel || !this.elements.chatSettingsBtn) return;
+        const shouldOpen = this.elements.chatSettingsPanel.hidden;
+        this.elements.chatSettingsPanel.hidden = !shouldOpen;
+        this.elements.chatSettingsBtn.classList.toggle('active', shouldOpen);
+        this.elements.chatSettingsBtn.setAttribute('aria-expanded', String(shouldOpen));
+    }
+
+    escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    renderMarkdownInline(text) {
+        return this.escapeHtml(text)
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+            .replace(/~~(.+?)~~/g, '<del>$1</del>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    }
+
+    renderMarkdown(content) {
+        const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
+        const html = [];
+        let listType = null;
+        let listClass = '';
+
+        const closeList = () => {
+            if (!listType) return;
+            html.push(`</${listType}>`);
+            listType = null;
+            listClass = '';
+        };
+
+        const openList = (type, className = '') => {
+            if (listType === type && listClass === className) return;
+            closeList();
+            html.push(`<${type}${className ? ` class="${className}"` : ''}>`);
+            listType = type;
+            listClass = className;
+        };
+
+        lines.forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                closeList();
+                return;
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+            if (headingMatch) {
+                closeList();
+                const level = Math.min(headingMatch[1].length + 3, 6);
+                html.push(`<h${level}>${this.renderMarkdownInline(headingMatch[2])}</h${level}>`);
+                return;
+            }
+
+            const checkboxMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+            if (checkboxMatch) {
+                openList('ul', 'markdown-checklist');
+                const checked = checkboxMatch[1].toLowerCase() === 'x' ? ' checked' : '';
+                html.push(`<li><input type="checkbox" disabled${checked}> <span>${this.renderMarkdownInline(checkboxMatch[2])}</span></li>`);
+                return;
+            }
+
+            const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+            if (orderedMatch) {
+                openList('ol');
+                html.push(`<li>${this.renderMarkdownInline(orderedMatch[1])}</li>`);
+                return;
+            }
+
+            const unorderedMatch = trimmed.match(/^[-*]\s+(.+)$/);
+            if (unorderedMatch) {
+                openList('ul');
+                html.push(`<li>${this.renderMarkdownInline(unorderedMatch[1])}</li>`);
+                return;
+            }
+
+            const quoteMatch = trimmed.match(/^>\s+(.+)$/);
+            if (quoteMatch) {
+                closeList();
+                html.push(`<blockquote>${this.renderMarkdownInline(quoteMatch[1])}</blockquote>`);
+                return;
+            }
+
+            closeList();
+            html.push(`<p>${this.renderMarkdownInline(trimmed)}</p>`);
+        });
+
+        closeList();
+        return html.join('');
+    }
+
     appendChatMessage(role, content) {
         this.chatHistory.push({ role, content });
         if (!this.elements.chatMessages) return;
         const el = document.createElement('div');
         el.className = `chat-message ${role}`;
-        el.textContent = content;
+        if (role === 'assistant') {
+            el.innerHTML = this.renderMarkdown(content);
+        } else {
+            el.textContent = content;
+        }
         this.elements.chatMessages.appendChild(el);
         this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
     }
@@ -342,6 +460,18 @@ class DashboardUI {
         if (!this.elements.chatContextPreview) return;
         const payload = this.buildChatPayload();
         this.elements.chatContextPreview.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    updateChatModelSummary() {
+        if (!this.elements.chatModelSummary) return;
+        const providerLabel = this.elements.chatProviderSelect
+            ? this.elements.chatProviderSelect.options[this.elements.chatProviderSelect.selectedIndex]?.textContent || 'Claude Code'
+            : 'Claude Code';
+        const model = (this.elements.chatModelInput?.value || this.elements.llmModelSelect?.value || 'sonnet').trim();
+        const modeLabel = this.elements.chatModeSelect
+            ? this.elements.chatModeSelect.options[this.elements.chatModeSelect.selectedIndex]?.textContent || '任务拆分'
+            : '任务拆分';
+        this.elements.chatModelSummary.textContent = `${providerLabel} · ${model || '默认模型'} · ${modeLabel}`;
     }
 
     async sendChat() {
@@ -769,6 +899,7 @@ class DashboardUI {
             // Apply theme and font size
             this.toggleTheme(settings.theme === 'dark');
             this.changeFontSize(settings.font_size);
+            this.updateChatModelSummary();
             this.updateChatContextPreview();
         } catch (error) {
             console.error('Failed to load settings:', error);

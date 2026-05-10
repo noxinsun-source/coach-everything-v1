@@ -150,38 +150,55 @@
 
                 <div class="center-view" id="chatView" style="display: none;">
                     <section class="section chat-section">
-                        <div class="chat-controls">
-                            <div class="chat-control">
-                                <label for="chatProviderSelect">提供商</label>
-                                <select id="chatProviderSelect" class="select-input">
-                                    <option value="claude_code">Claude Code (本地 CLI)</option>
-                                    <option value="codex">Codex (本地 CLI)</option>
-                                </select>
+                        <div class="chat-header">
+                            <div class="chat-title-group">
+                                <h3>对话</h3>
+                                <div class="chat-model-summary" id="chatModelSummary">Claude Code · sonnet · 任务拆分</div>
                             </div>
-                            <div class="chat-control">
-                                <label for="chatModelInput">模型</label>
-                                <input id="chatModelInput" class="text-input" placeholder="Claude: sonnet / opus；Codex: gpt-5.2">
+                            <div class="chat-header-actions">
+                                <button class="btn btn-secondary chat-settings-btn" id="chatSettingsBtn" type="button" aria-expanded="false" aria-controls="chatSettingsPanel">
+                                    <i class="fas fa-sliders-h"></i> 模型设置
+                                </button>
+                                <button class="btn btn-secondary" id="chatClearBtn" type="button">清空</button>
                             </div>
-                            <div class="chat-control">
-                                <label for="chatModeSelect">模式</label>
-                                <select id="chatModeSelect" class="select-input">
-                                    <option value="task_breakdown">任务拆分</option>
-                                    <option value="coding">编程</option>
-                                    <option value="research">研究</option>
-                                    <option value="custom">自定义</option>
-                                </select>
+                        </div>
+
+                        <div class="chat-settings-panel" id="chatSettingsPanel" hidden>
+                            <div class="chat-controls">
+                                <div class="chat-control">
+                                    <label for="chatProviderSelect">提供商</label>
+                                    <select id="chatProviderSelect" class="select-input">
+                                        <option value="claude_code">Claude Code (本地 CLI)</option>
+                                        <option value="codex">Codex (本地 CLI)</option>
+                                    </select>
+                                </div>
+                                <div class="chat-control">
+                                    <label for="chatModelInput">模型</label>
+                                    <input id="chatModelInput" class="text-input" placeholder="Claude: sonnet / opus；Codex: gpt-5.2">
+                                </div>
+                                <div class="chat-control">
+                                    <label for="chatModeSelect">模式</label>
+                                    <select id="chatModeSelect" class="select-input">
+                                        <option value="task_breakdown">任务拆分</option>
+                                        <option value="coding">编程</option>
+                                        <option value="research">研究</option>
+                                        <option value="custom">自定义</option>
+                                    </select>
+                                </div>
+                                <div class="chat-control">
+                                    <label for="chatContextLimit">上下文(字符)</label>
+                                    <input type="number" id="chatContextLimit" class="text-input" value="8000" min="500" step="500">
+                                </div>
+                                <div class="chat-control chat-control-wide">
+                                    <label for="chatSystemPromptInput">自定义系统提示</label>
+                                    <input id="chatSystemPromptInput" class="text-input" placeholder="可选：补充约束/风格/偏好">
+                                </div>
                             </div>
-                            <div class="chat-control chat-control-wide">
-                                <label for="chatSystemPromptInput">自定义系统提示</label>
-                                <input id="chatSystemPromptInput" class="text-input" placeholder="可选：补充约束/风格/偏好">
-                            </div>
-                            <div class="chat-control">
-                                <label for="chatContextLimit">上下文(字符)</label>
-                                <input type="number" id="chatContextLimit" class="text-input" value="8000" min="500" step="500">
-                            </div>
-                            <div class="chat-control">
-                                <button class="btn btn-secondary" id="chatClearBtn">清空</button>
-                            </div>
+
+                            <details class="chat-context" id="chatContextDetails">
+                                <summary>查看将发送的上下文</summary>
+                                <pre class="chat-context-pre" id="chatContextPreview"></pre>
+                            </details>
                         </div>
 
                         <div class="chat-messages" id="chatMessages"></div>
@@ -190,11 +207,6 @@
                             <textarea id="chatInput" class="chat-input" rows="3" placeholder="输入你的问题..."></textarea>
                             <button class="btn btn-primary" id="chatSendBtn">发送</button>
                         </div>
-
-                        <details class="chat-context" id="chatContextDetails">
-                            <summary>查看将发送的上下文</summary>
-                            <pre class="chat-context-pre" id="chatContextPreview"></pre>
-                        </details>
                     </section>
                 </div>
             </main>
