@@ -27,13 +27,22 @@ class CoachAPI {
         try {
             const response = await fetch(url, config);
 
-            if (!response.ok) {
-                throw new Error(`API Error: ${response.status} ${response.statusText}`);
+            const text = await response.text();
+            let data = null;
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    data = { detail: text };
+                }
             }
 
-            // Handle empty responses
-            const text = await response.text();
-            return text ? JSON.parse(text) : null;
+            if (!response.ok) {
+                const detail = data?.detail || data?.message || response.statusText;
+                throw new Error(`API Error: ${response.status} ${detail}`);
+            }
+
+            return data;
         } catch (error) {
             console.error(`Request failed for ${endpoint}:`, error);
             throw error;

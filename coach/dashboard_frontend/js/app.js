@@ -152,16 +152,6 @@ function setupKeyboardShortcuts() {
             ui.showAnalytics();
         }
 
-        // Space: Start/pause timer
-        if (e.key === ' ') {
-            e.preventDefault();
-            if (ui.isTimerRunning) {
-                ui.pauseTimer();
-            } else {
-                ui.startTimer();
-            }
-        }
-
         // Escape: Close modals
         if (e.key === 'Escape') {
             ui.closeSettings();

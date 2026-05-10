@@ -754,8 +754,12 @@ class DashboardUI {
             }
 
             if (this.elements.chatProviderSelect) {
-                if (settings.llm_provider) {
+                const providerSupportedInChat = Array.from(this.elements.chatProviderSelect.options)
+                    .some((option) => option.value === settings.llm_provider);
+                if (settings.llm_provider && providerSupportedInChat) {
                     this.elements.chatProviderSelect.value = settings.llm_provider;
+                } else {
+                    this.elements.chatProviderSelect.value = 'claude_code';
                 }
             }
             if (this.elements.chatModelInput) {

@@ -160,7 +160,7 @@
                             </div>
                             <div class="chat-control">
                                 <label for="chatModelInput">模型</label>
-                                <input id="chatModelInput" class="text-input" placeholder="例如：claude-3-5-sonnet 或 gpt-4.1">
+                                <input id="chatModelInput" class="text-input" placeholder="Claude: sonnet / opus；Codex: gpt-5.2">
                             </div>
                             <div class="chat-control">
                                 <label for="chatModeSelect">模式</label>
@@ -269,9 +269,9 @@
                     <div class="setting-item">
                         <label for="llmModelSelect">模型</label>
                         <select id="llmModelSelect" class="select-input">
-                            <option value="claude-3-haiku">Claude 3 Haiku</option>
-                            <option value="claude-3-sonnet">Claude 3 Sonnet</option>
-                            <option value="gpt-4">GPT-4</option>
+                            <option value="sonnet">Claude Code: sonnet</option>
+                            <option value="opus">Claude Code: opus</option>
+                            <option value="gpt-5.2">Codex: gpt-5.2</option>
                         </select>
                     </div>
                     <div class="setting-item">
@@ -284,11 +284,11 @@
                     </div>
                     <div class="setting-item">
                         <label for="cliClaudeCommandInput">Claude CLI 命令模板</label>
-                        <input id="cliClaudeCommandInput" class="text-input" placeholder="例如：claude --model {model}">
+                        <input id="cliClaudeCommandInput" class="text-input" placeholder="例如：claude -p --model {model}">
                     </div>
                     <div class="setting-item">
                         <label for="cliCodexCommandInput">Codex CLI 命令模板</label>
-                        <input id="cliCodexCommandInput" class="text-input" placeholder="例如：codex --model {model}">
+                        <input id="cliCodexCommandInput" class="text-input" placeholder="例如：codex exec --model {model} --sandbox read-only -">
                     </div>
                     <div class="setting-item">
                         <label for="cliTimeoutInput">CLI 超时(秒)</label>

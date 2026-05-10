@@ -203,7 +203,54 @@ http://127.0.0.1:8000/
 - 📁 Obsidian 工作区文件浏览
 - ⚙️ 主题、语言、LLM 配置
 
-### 5. 获取陪跑
+### 5. 配置本地 CLI 大模型
+
+Dashboard 支持通过本机已登录的 CLI 调用模型，适合已经安装 Claude Code 或 Codex 的用户。进入 Dashboard 右上角设置，在 **LLM 配置** 中选择提供商并填写命令模板。
+
+#### Claude Code（推荐默认）
+
+1. 确认本机已安装并登录 Claude Code：
+   ```bash
+   claude --help
+   ```
+2. 在 Dashboard 中选择：
+   - **LLM 提供商**：`Claude Code (本地 CLI)`
+   - **模型**：`sonnet`（也可以用 `opus`）
+   - **Claude CLI 命令模板**：
+     ```bash
+     claude -p --model {model}
+     ```
+
+`-p/--print` 是必须的，它让 Claude Code 以非交互模式读取 Dashboard 传入的 prompt，生成结果后退出。不要使用旧的 `claude --model {model}`，它会进入交互模式，后端请求会一直等待或超时。
+
+#### Codex（本地 CLI）
+
+1. 确认本机可运行 Codex CLI：
+   ```bash
+   codex exec --help
+   ```
+2. 在 Dashboard 中选择：
+   - **LLM 提供商**：`Codex (本地 CLI)`
+   - **模型**：例如 `gpt-5.2`
+   - **Codex CLI 命令模板**：
+     ```bash
+     codex exec --model {model} --sandbox read-only --ephemeral --ignore-user-config --ignore-rules --color never -
+     ```
+
+如果你使用 macOS Codex App，也可以填入 App 内置 CLI 的完整路径：
+
+```bash
+/Applications/Codex.app/Contents/Resources/codex exec --model {model} --sandbox read-only --ephemeral --ignore-user-config --ignore-rules --color never -
+```
+
+#### 隐私与 API Key
+
+- Dashboard 不会把 API Key 写进仓库；设置页输入的 API Key 只保存在本机 `~/.coach/coach_dashboard.db`。
+- 本地 CLI 模式保存的是命令模板，例如 `claude -p --model {model}`，不包含密钥。
+- “本地 CLI”不等于“离线本地模型”。Claude Code 通常会调用 Anthropic，Codex 通常会调用 OpenAI；你在聊天框输入的内容会作为 prompt 传给对应 CLI。
+- 如果需要完全离线模型，建议后续接入 Ollama 或 LM Studio 这类本地推理服务。
+
+### 6. 获取陪跑
 卡住时：
 ```bash
 coach help
@@ -222,7 +269,7 @@ Coach Agent 回应：
 什么会最有帮助？
 ```
 
-### 5. 切换任务
+### 7. 切换任务
 ```bash
 coach next
 ```

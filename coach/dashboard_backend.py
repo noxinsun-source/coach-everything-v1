@@ -20,6 +20,20 @@ import shlex
 import subprocess
 from pathlib import Path
 
+DEFAULT_PROVIDER = "claude_code"
+DEFAULT_MODEL = "sonnet"
+DEFAULT_CLAUDE_CLI_COMMAND = "claude -p --model {model}"
+CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
+DEFAULT_CODEX_CLI_COMMAND = (
+    f"{CODEX_APP_CLI} exec --model {{model}} --sandbox read-only "
+    "--ephemeral --ignore-user-config --ignore-rules --color never -"
+    if CODEX_APP_CLI.exists()
+    else (
+        "codex exec --model {model} --sandbox read-only "
+        "--ephemeral --ignore-user-config --ignore-rules --color never -"
+    )
+)
+
 # Initialize FastAPI
 app = FastAPI(title="Coach Everything Dashboard", version="1.0.0")
 
@@ -111,8 +125,8 @@ class UserSettings(Base):
     theme = Column(String, default="light")  # light, dark
     font_size = Column(Integer, default=14)
     language = Column(String, default="zh")  # zh, en
-    llm_provider = Column(String, default="anthropic")
-    llm_model = Column(String, default="claude-3-haiku-20240307")
+    llm_provider = Column(String, default=DEFAULT_PROVIDER)
+    llm_model = Column(String, default=DEFAULT_MODEL)
     llm_api_key = Column(String, nullable=True)
     llm_api_key_encrypted = Column(String, nullable=True)
     llm_base_url = Column(String, nullable=True)
@@ -496,11 +510,25 @@ async def get_settings(db: Session = Depends(get_db)):
         db.refresh(settings)
 
     changed = False
-    if not settings.cli_claude_command:
-        settings.cli_claude_command = "claude --model {model}"
+    if not settings.llm_provider or (
+        settings.llm_provider == "anthropic"
+        and not (settings.llm_api_key_encrypted or settings.llm_api_key)
+    ):
+        settings.llm_provider = DEFAULT_PROVIDER
         changed = True
-    if not settings.cli_codex_command:
-        settings.cli_codex_command = "codex --model {model}"
+    if not settings.llm_model or settings.llm_model.startswith("claude-3-"):
+        settings.llm_model = DEFAULT_MODEL
+        changed = True
+    if not settings.cli_claude_command or settings.cli_claude_command == "claude --model {model}":
+        settings.cli_claude_command = DEFAULT_CLAUDE_CLI_COMMAND
+        changed = True
+    if (
+        not settings.cli_codex_command
+        or settings.cli_codex_command == "codex --model {model}"
+        or "--ask-for-approval" in settings.cli_codex_command
+        or "--ephemeral" not in settings.cli_codex_command
+    ):
+        settings.cli_codex_command = DEFAULT_CODEX_CLI_COMMAND
         changed = True
     if not settings.cli_timeout_seconds:
         settings.cli_timeout_seconds = 120
@@ -577,9 +605,9 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
 
     try:
         if provider in ("claude_code", "claude"):
-            out = _run_cli(settings.cli_claude_command or "claude --model {model}", model, prompt, timeout_seconds)
+            out = _run_cli(settings.cli_claude_command or DEFAULT_CLAUDE_CLI_COMMAND, model, prompt, timeout_seconds)
         elif provider in ("codex", "codex_cli"):
-            out = _run_cli(settings.cli_codex_command or "codex --model {model}", model, prompt, timeout_seconds)
+            out = _run_cli(settings.cli_codex_command or DEFAULT_CODEX_CLI_COMMAND, model, prompt, timeout_seconds)
         elif provider == "mock":
             last_user = ""
             for m in reversed(req.messages):
@@ -598,7 +626,11 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         if msg == "cli_command_not_configured":
             raise HTTPException(status_code=400, detail="CLI command not configured")
         if msg.startswith("cli_failed:"):
-            raise HTTPException(status_code=500, detail=msg)
+            _, code, stderr = msg.split(":", 2)
+            raise HTTPException(
+                status_code=500,
+                detail=f"{provider} CLI exited with code {code}: {stderr or 'no stderr output'}",
+            )
         raise HTTPException(status_code=500, detail=msg)
 
     return ChatResponse(
