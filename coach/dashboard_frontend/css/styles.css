@@ -566,6 +566,11 @@ body {
     background-color: rgba(245, 158, 11, 0.05);
 }
 
+.task-item.in_progress {
+    border-left-color: var(--color-warning);
+    background-color: rgba(245, 158, 11, 0.05);
+}
+
 .task-header {
     display: flex;
     justify-content: space-between;
@@ -573,10 +578,26 @@ body {
     margin-bottom: var(--spacing-sm);
 }
 
+.task-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    min-width: 0;
+}
+
+.task-check {
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    accent-color: var(--color-primary);
+    flex: 0 0 auto;
+}
+
 .task-title {
     font-weight: 600;
     color: var(--color-text-dark);
     flex: 1;
+    min-width: 0;
 }
 
 .task-status {
@@ -597,6 +618,11 @@ body {
     color: #92400e;
 }
 
+.task-status.in_progress {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
 .task-status.completed {
     background-color: #dcfce7;
     color: #166534;
@@ -608,8 +634,45 @@ body {
     margin-bottom: var(--spacing-sm);
 }
 
+.markdown-task {
+    color: var(--color-text-dark);
+}
+
+.markdown-task p,
+.markdown-task ul,
+.markdown-task ol,
+.markdown-task blockquote,
+.markdown-task .markdown-table-wrap {
+    margin-bottom: var(--spacing-sm);
+}
+
+.markdown-task p:last-child,
+.markdown-task ul:last-child,
+.markdown-task ol:last-child,
+.markdown-task blockquote:last-child,
+.markdown-task .markdown-table-wrap:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-task ul,
+.markdown-task ol {
+    padding-left: 1.15rem;
+}
+
+.markdown-task a,
+.chat-message a {
+    color: var(--color-primary);
+    text-decoration: none;
+}
+
+.markdown-task a:hover,
+.chat-message a:hover {
+    text-decoration: underline;
+}
+
 .task-meta {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--spacing-lg);
     font-size: 0.85rem;
     color: var(--color-text-light);
@@ -619,6 +682,13 @@ body {
     display: flex;
     align-items: center;
     gap: var(--spacing-xs);
+}
+
+.task-phase-pill {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background-color: rgba(99, 102, 241, 0.12);
+    color: var(--color-primary);
 }
 
 /* ========== Coaching Notes ========== */
@@ -698,6 +768,17 @@ body {
 
 .file-tree {
     list-style: none;
+}
+
+.workspace-path {
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    color: var(--color-text-light);
+    background-color: var(--color-bg-light);
+    font-size: 0.78rem;
+    word-break: break-all;
 }
 
 .file-item {
@@ -1448,6 +1529,77 @@ body.font-large {
     flex: 0 0 auto;
 }
 
+.markdown-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.markdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.markdown-table th,
+.markdown-table td {
+    padding: 7px 9px;
+    border: 1px solid var(--color-border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.markdown-table th {
+    background-color: rgba(99, 102, 241, 0.1);
+    color: var(--color-text-dark);
+    font-weight: 700;
+}
+
+.chat-sync-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid rgba(99, 102, 241, 0.18);
+}
+
+.chat-sync-label {
+    color: var(--color-text-light);
+    font-size: 0.82rem;
+}
+
+.chat-sync-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--color-primary);
+    border-radius: 999px;
+    background-color: rgba(99, 102, 241, 0.08);
+    color: var(--color-primary);
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.chat-sync-btn:hover:not(:disabled) {
+    background-color: rgba(99, 102, 241, 0.14);
+}
+
+.chat-sync-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+.chat-sync-action.synced .chat-sync-label {
+    color: var(--color-success);
+}
+
+.chat-sync-action.sync-error .chat-sync-label {
+    color: var(--color-danger);
+}
+
 .chat-runtime {
     margin-top: var(--spacing-sm);
     color: var(--color-text-light);
@@ -1631,6 +1783,11 @@ body.font-large {
 
     .chat-header-actions .btn {
         flex: 1;
+    }
+
+    .chat-sync-action {
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .chat-controls {

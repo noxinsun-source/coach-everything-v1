@@ -148,6 +148,13 @@ class CoachAPI {
         });
     }
 
+    async syncChatTasks(syncData) {
+        return this.request('/api/chat/sync-tasks', {
+            method: 'POST',
+            body: JSON.stringify(syncData),
+        });
+    }
+
     async chatStream(chatData, handlers = {}) {
         const response = await fetch(`${this.baseURL}/api/chat/stream`, {
             method: 'POST',

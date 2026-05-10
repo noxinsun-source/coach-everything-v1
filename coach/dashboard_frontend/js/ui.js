@@ -24,6 +24,7 @@ class DashboardUI {
         this.pieChartInstance = null;
         this.isChatRunning = false;
         this.chatRuntimeHideTimer = null;
+        this.lastChatUserText = '';
 
         this.initializeElements();
         this.initializeTimerControls();
@@ -398,7 +399,7 @@ class DashboardUI {
             this.renderCoachingNotes(dashboardData.recent_coaching_notes);
 
             // Render file browser
-            this.renderFileTree(dashboardData.project);
+            this.renderFileTree(dashboardData.project, dashboardData.workspace_files || []);
 
             // Show project content
             this.elements.emptyState.style.display = 'none';
@@ -474,6 +475,7 @@ class DashboardUI {
 
     renderMarkdownInline(text) {
         return this.escapeHtml(text)
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
             .replace(/`([^`]+)`/g, '<code>$1</code>')
             .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
             .replace(/__([^_]+)__/g, '<strong>$1</strong>')
@@ -486,12 +488,37 @@ class DashboardUI {
         const html = [];
         let listType = null;
         let listClass = '';
+        let tableRows = [];
 
         const closeList = () => {
             if (!listType) return;
             html.push(`</${listType}>`);
             listType = null;
             listClass = '';
+        };
+
+        const closeTable = () => {
+            if (tableRows.length === 0) return;
+            const rows = tableRows
+                .filter((row) => !/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(row))
+                .map((row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim()));
+            tableRows = [];
+            if (rows.length === 0) return;
+
+            const [header, ...bodyRows] = rows;
+            html.push('<div class="markdown-table-wrap"><table class="markdown-table"><thead><tr>');
+            header.forEach((cell) => {
+                html.push(`<th>${this.renderMarkdownInline(cell)}</th>`);
+            });
+            html.push('</tr></thead><tbody>');
+            bodyRows.forEach((row) => {
+                html.push('<tr>');
+                row.forEach((cell) => {
+                    html.push(`<td>${this.renderMarkdownInline(cell)}</td>`);
+                });
+                html.push('</tr>');
+            });
+            html.push('</tbody></table></div>');
         };
 
         const openList = (type, className = '') => {
@@ -506,12 +533,20 @@ class DashboardUI {
             const trimmed = line.trim();
             if (!trimmed) {
                 closeList();
+                closeTable();
+                return;
+            }
+
+            if (/^\|.+\|$/.test(trimmed)) {
+                closeList();
+                tableRows.push(trimmed);
                 return;
             }
 
             const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
             if (headingMatch) {
                 closeList();
+                closeTable();
                 const level = Math.min(headingMatch[1].length + 3, 6);
                 html.push(`<h${level}>${this.renderMarkdownInline(headingMatch[2])}</h${level}>`);
                 return;
@@ -519,6 +554,7 @@ class DashboardUI {
 
             const checkboxMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
             if (checkboxMatch) {
+                closeTable();
                 openList('ul', 'markdown-checklist');
                 const checked = checkboxMatch[1].toLowerCase() === 'x' ? ' checked' : '';
                 html.push(`<li><input type="checkbox" disabled${checked}> <span>${this.renderMarkdownInline(checkboxMatch[2])}</span></li>`);
@@ -527,6 +563,7 @@ class DashboardUI {
 
             const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
             if (orderedMatch) {
+                closeTable();
                 openList('ol');
                 html.push(`<li>${this.renderMarkdownInline(orderedMatch[1])}</li>`);
                 return;
@@ -534,6 +571,7 @@ class DashboardUI {
 
             const unorderedMatch = trimmed.match(/^[-*]\s+(.+)$/);
             if (unorderedMatch) {
+                closeTable();
                 openList('ul');
                 html.push(`<li>${this.renderMarkdownInline(unorderedMatch[1])}</li>`);
                 return;
@@ -542,15 +580,18 @@ class DashboardUI {
             const quoteMatch = trimmed.match(/^>\s+(.+)$/);
             if (quoteMatch) {
                 closeList();
+                closeTable();
                 html.push(`<blockquote>${this.renderMarkdownInline(quoteMatch[1])}</blockquote>`);
                 return;
             }
 
             closeList();
+            closeTable();
             html.push(`<p>${this.renderMarkdownInline(trimmed)}</p>`);
         });
 
         closeList();
+        closeTable();
         return html.join('');
     }
 
@@ -566,6 +607,7 @@ class DashboardUI {
         }
         this.elements.chatMessages.appendChild(el);
         this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+        return el;
     }
 
     buildChatPayload() {
@@ -691,12 +733,100 @@ class DashboardUI {
         return message;
     }
 
+    countTaskLikeItems(content) {
+        const lines = String(content || '').split('\n');
+        return lines.filter((line) => {
+            const trimmed = line.trim();
+            return /^[-*+]\s+(?:\[[ xX]\]\s*)?\S+/.test(trimmed)
+                || /^\d+[.)、]\s+\S+/.test(trimmed)
+                || (/^\|.+\|$/.test(trimmed) && !trimmed.includes('---'));
+        }).length;
+    }
+
+    deriveChatProjectName() {
+        const source = this.lastChatUserText || '对话任务拆分';
+        const cleaned = source
+            .replace(/[^\w\u4e00-\u9fff ]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return (cleaned || '对话任务拆分').slice(0, 28);
+    }
+
+    attachTaskSyncAction(messageEl, content) {
+        if (!messageEl || !content) return;
+        const mode = this.elements.chatModeSelect?.value || 'task_breakdown';
+        const taskCount = this.countTaskLikeItems(content);
+        if (mode !== 'task_breakdown' && taskCount === 0) return;
+
+        const action = document.createElement('div');
+        action.className = 'chat-sync-action';
+
+        const label = document.createElement('span');
+        label.className = 'chat-sync-label';
+        label.textContent = taskCount > 0
+            ? `识别到 ${taskCount} 个候选任务`
+            : '可同步为任务拆分';
+
+        const button = document.createElement('button');
+        button.className = 'chat-sync-btn';
+        button.type = 'button';
+        button.innerHTML = '<i class="fas fa-arrows-rotate"></i> 同步到任务拆分';
+        button.addEventListener('click', () => this.syncAssistantTasks(content, action, button));
+
+        action.appendChild(label);
+        action.appendChild(button);
+        messageEl.appendChild(action);
+    }
+
+    async syncAssistantTasks(content, actionEl, buttonEl) {
+        if (!content || !buttonEl) return;
+        buttonEl.disabled = true;
+        buttonEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 同步中';
+
+        try {
+            const syncResult = await api.syncChatTasks({
+                project_id: this.currentProjectId,
+                project_name: this.deriveChatProjectName(),
+                content,
+            });
+
+            const projects = await api.getProjects();
+            this.populateProjectSelector(projects);
+            this.elements.projectSelector.value = syncResult.project.id;
+            await this.loadProject(syncResult.project.id);
+            this.showTasksTab();
+
+            if (actionEl) {
+                actionEl.classList.add('synced');
+                const label = actionEl.querySelector('.chat-sync-label');
+                if (label) {
+                    label.textContent = `已同步 ${syncResult.created_count} 个任务，工作区文件 ${syncResult.workspace_files.length} 个`;
+                }
+            }
+            buttonEl.innerHTML = '<i class="fas fa-check"></i> 已同步';
+            this.showNotification('已同步到任务拆分和工作区文件', 'success');
+        } catch (error) {
+            console.error('Sync tasks failed:', error);
+            buttonEl.disabled = false;
+            buttonEl.innerHTML = '<i class="fas fa-triangle-exclamation"></i> 重试同步';
+            if (actionEl) {
+                actionEl.classList.add('sync-error');
+                const label = actionEl.querySelector('.chat-sync-label');
+                if (label) {
+                    label.textContent = `同步失败：${error.message || error}`;
+                }
+            }
+            this.showNotification('任务同步失败', 'error');
+        }
+    }
+
     async sendChat() {
         if (!this.elements.chatInput) return;
         if (this.isChatRunning) return;
         const text = (this.elements.chatInput.value || '').trim();
         if (!text) return;
         this.elements.chatInput.value = '';
+        this.lastChatUserText = text;
         this.appendChatMessage('user', text);
         this.updateChatContextPreview();
 
@@ -742,7 +872,8 @@ class DashboardUI {
             if (streamError) {
                 throw streamError;
             }
-            this.appendChatMessage('assistant', finalContent || '模型没有返回文本内容。');
+            const assistantMessage = this.appendChatMessage('assistant', finalContent || '模型没有返回文本内容。');
+            this.attachTaskSyncAction(assistantMessage, finalContent);
             this.updateChatContextPreview();
             this.setChatRuntimeState('done', '回答完成');
             this.hideChatRuntime();
@@ -781,13 +912,27 @@ class DashboardUI {
             const actualStr = task.actual_minutes > 0
                 ? `实际${task.actual_minutes}分钟`
                 : '进行中';
+            const createdAt = task.created_at
+                ? new Date(task.created_at).toLocaleString('zh-CN', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                })
+                : '刚刚';
+            const safeStatus = this.escapeHtml(task.status || 'pending');
+            const safeTitle = this.escapeHtml(task.title || '未命名任务');
+            const safePhase = this.escapeHtml(task.phase || '未分组');
 
             taskItem.innerHTML = `
                 <div class="task-header">
-                    <div class="task-title">${task.title}</div>
-                    <span class="task-status ${task.status}">${this.getTaskStatusText(task.status)}</span>
+                    <div class="task-title-row">
+                        <input class="task-check" type="checkbox" disabled ${task.status === 'completed' ? 'checked' : ''}>
+                        <div class="task-title">${safeTitle}</div>
+                    </div>
+                    <span class="task-status ${safeStatus}">${this.getTaskStatusText(task.status)}</span>
                 </div>
-                <div class="task-description">${task.description || '无描述'}</div>
+                <div class="task-description markdown-task">${this.renderMarkdown(task.description || '无描述')}</div>
                 <div class="task-meta">
                     <div class="task-meta-item">
                         <i class="fas fa-clock"></i>
@@ -799,7 +944,11 @@ class DashboardUI {
                     </div>
                     <div class="task-meta-item">
                         <i class="fas fa-tasks"></i>
-                        阶段: ${task.phase}
+                        阶段: <span class="task-phase-pill">${safePhase}</span>
+                    </div>
+                    <div class="task-meta-item">
+                        <i class="fas fa-calendar-plus"></i>
+                        ${createdAt}
                     </div>
                 </div>
             `;
@@ -983,20 +1132,35 @@ class DashboardUI {
 
     // ========== File Tree Rendering ==========
 
-    renderFileTree(project) {
+    renderFileTree(project, workspaceFiles = []) {
         const browser = this.elements.workspaceBrowser;
         browser.innerHTML = '';
 
-        const folders = ['📋 Roadmap', '📊 Task Progress', '🤖 Coach Log'];
+        const projectPath = project?.vault_path || '';
+        if (projectPath) {
+            const pathInfo = document.createElement('div');
+            pathInfo.className = 'workspace-path';
+            pathInfo.textContent = projectPath;
+            browser.appendChild(pathInfo);
+        }
+
+        const files = workspaceFiles.length > 0
+            ? workspaceFiles
+            : [
+                { name: 'Roadmap.md', type: 'file' },
+                { name: 'Task Progress.md', type: 'file' },
+                { name: 'Coach Log.md', type: 'file' },
+            ];
         const list = document.createElement('ul');
         list.className = 'file-tree';
 
-        folders.forEach((folder) => {
+        files.forEach((file) => {
             const item = document.createElement('li');
-            item.className = 'file-item folder';
+            item.className = `file-item ${file.type || 'file'}`;
+            item.title = file.path || file.name;
             item.innerHTML = `
-                <span class="file-icon">📁</span>
-                <span class="file-label">${folder}</span>
+                <span class="file-icon">${file.type === 'folder' ? '📁' : '📄'}</span>
+                <span class="file-label">${this.escapeHtml(file.name)}</span>
             `;
             list.appendChild(item);
         });

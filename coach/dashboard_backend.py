@@ -16,6 +16,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -54,6 +55,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_static_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/js/", "/css/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 # Mount static files (CSS, JS)
 static_dir = Path(__file__).parent / "dashboard_frontend"
@@ -218,6 +228,7 @@ class ProjectResponse(BaseModel):
     description: str
     domain: str
     created_at: datetime
+    vault_path: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -233,6 +244,7 @@ class TaskResponse(BaseModel):
     estimated_minutes: int
     actual_minutes: int
     completion_percent: float = 0
+    created_at: Optional[datetime] = None
 
 
 class TimeStatsResponse(BaseModel):
@@ -252,6 +264,7 @@ class DashboardDataResponse(BaseModel):
     time_stats: TimeStatsResponse
     recent_coaching_notes: List[dict]
     gantt_data: dict
+    workspace_files: List[dict] = []
 
 
 class ChatMessage(BaseModel):
@@ -273,6 +286,20 @@ class ChatResponse(BaseModel):
     message: ChatMessage
 
 
+class ChatTaskSyncRequest(BaseModel):
+    content: str
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+
+
+class ChatTaskSyncResponse(BaseModel):
+    project: ProjectResponse
+    tasks: List[TaskResponse]
+    workspace_files: List[dict]
+    created_count: int
+    skipped_count: int
+
+
 class _SafeFormatDict(dict):
     def __missing__(self, key):
         return ""
@@ -286,7 +313,11 @@ def _build_system_prompt(mode: str, custom: Optional[str]) -> str:
     elif mode == "custom":
         base = custom or ""
     else:
-        base = "你是一个任务拆分教练。目标是把用户的模糊目标拆成可执行的下一步，并在不确定时提出澄清问题。"
+        base = (
+            "你是一个任务拆分教练。目标是把用户的模糊目标拆成可执行的下一步，并在不确定时提出澄清问题。"
+            "当你给出可同步的任务拆分时，优先使用 Markdown 标题、编号步骤、- [ ] 待办项、预计分钟数、链接和表格，"
+            "这样前端可以把回答同步进任务面板。"
+        )
 
     if custom and mode != "custom":
         return f"{base}\n\n补充要求：{custom}"
@@ -305,6 +336,161 @@ def _render_prompt(system_prompt: str, messages: List[ChatMessage]) -> str:
         parts.append(f"{role}: {content}")
     parts.append("ASSISTANT:")
     return "\n\n".join(parts).strip() + "\n"
+
+
+def _clean_markdown_text(value: str) -> str:
+    text = re.sub(r"`([^`]+)`", r"\1", value or "")
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+    return text.strip(" \t-—:：")
+
+
+def _extract_minutes(text: str) -> int:
+    hours = re.search(r"(\d+(?:\.\d+)?)\s*(?:小时|hour|hours|h)", text, re.IGNORECASE)
+    if hours:
+        return max(5, int(float(hours.group(1)) * 60))
+    minutes = re.search(r"(\d+)\s*(?:分钟|minute|minutes|min|m)", text, re.IGNORECASE)
+    if minutes:
+        return max(5, int(minutes.group(1)))
+    return 60
+
+
+def _split_task_title_description(text: str) -> tuple[str, str]:
+    cleaned = _clean_markdown_text(text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return "", ""
+
+    for delimiter in ("：", ":", " - ", " — "):
+        if delimiter in cleaned:
+            title, description = cleaned.split(delimiter, 1)
+            return title.strip()[:120], description.strip()
+
+    return cleaned[:120], cleaned
+
+
+def _parse_tasks_from_markdown(content: str) -> List[dict]:
+    tasks = []
+    phase = "对话拆分"
+    seen = set()
+
+    for raw_line in (content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        heading_match = re.match(r"^#{1,6}\s+(.+)$", line)
+        if heading_match:
+            phase = _clean_markdown_text(heading_match.group(1))[:80] or phase
+            continue
+
+        if re.match(r"^\|.+\|$", line) and "---" not in line:
+            cells = [_clean_markdown_text(cell) for cell in line.strip("|").split("|")]
+            cells = [cell for cell in cells if cell]
+            if not cells or any(cell in {"任务", "步骤", "事项", "时间", "负责人", "状态"} for cell in cells[:2]):
+                continue
+            title, description = _split_task_title_description(cells[0])
+            if len(cells) > 1:
+                description = " | ".join(cells[1:])
+        else:
+            item_match = re.match(r"^(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)、]\s+)(.+)$", line)
+            if not item_match:
+                continue
+            title, description = _split_task_title_description(item_match.group(1))
+
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        tasks.append({
+            "title": title,
+            "description": description or title,
+            "phase": phase,
+            "estimated_minutes": _extract_minutes(line),
+        })
+
+    if not tasks:
+        for line in (content or "").splitlines():
+            cleaned = _clean_markdown_text(line)
+            if cleaned:
+                title, description = _split_task_title_description(cleaned)
+                if title:
+                    tasks.append({
+                        "title": title,
+                        "description": description or title,
+                        "phase": phase,
+                        "estimated_minutes": _extract_minutes(cleaned),
+                    })
+                break
+
+    return tasks
+
+
+def _safe_project_name(name: str) -> str:
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff -]+", "", name or "").strip()
+    cleaned = re.sub(r"\s+", "-", cleaned)
+    return cleaned[:60] or "chat-task-plan"
+
+
+def _workspace_path_for_project(project: Project, ensure: bool = True) -> Optional[Path]:
+    if project.vault_path:
+        path = Path(project.vault_path).expanduser()
+    else:
+        if not ensure:
+            return None
+        path = Path.home() / ".coach" / "workspaces" / _safe_project_name(project.name)
+        project.vault_path = str(path)
+    if ensure:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _workspace_files_for_project(project: Project) -> List[dict]:
+    workspace = _workspace_path_for_project(project, ensure=False)
+    if not workspace or not workspace.exists():
+        return []
+    files = []
+    for name in ("Roadmap.md", "Task Progress.md", "Coach Log.md"):
+        path = workspace / name
+        if path.exists():
+            files.append({"name": name, "path": str(path), "type": "file"})
+    return files
+
+
+def _write_workspace_files(project: Project, tasks: List[TaskRecord], synced_content: str) -> List[dict]:
+    workspace = _workspace_path_for_project(project)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    roadmap = [f"# {project.name} Roadmap", "", f"Generated: {now}", ""]
+    for task in tasks:
+        roadmap.append(f"- [{'x' if task.status == 'completed' else ' '}] **{task.title}** ({task.estimated_minutes} 分钟)")
+        if task.description:
+            roadmap.append(f"  - {task.description}")
+    (workspace / "Roadmap.md").write_text("\n".join(roadmap).strip() + "\n", encoding="utf-8")
+
+    progress = [
+        f"# {project.name} Task Progress",
+        "",
+        "| 任务 | 阶段 | 状态 | 预计时间 | 创建时间 |",
+        "| --- | --- | --- | ---: | --- |",
+    ]
+    for task in tasks:
+        progress.append(
+            f"| {task.title} | {task.phase or '-'} | {task.status} | {task.estimated_minutes} 分钟 | {task.created_at:%Y-%m-%d %H:%M} |"
+        )
+    (workspace / "Task Progress.md").write_text("\n".join(progress).strip() + "\n", encoding="utf-8")
+
+    log_path = workspace / "Coach Log.md"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"\n## Chat Sync {now}\n\n")
+        f.write((synced_content or "").strip())
+        f.write("\n")
+
+    return _workspace_files_for_project(project)
 
 
 def _run_cli(command_template: str, model: Optional[str], prompt: str, timeout_seconds: int) -> str:
@@ -542,7 +728,8 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
             status=t.status,
             estimated_minutes=t.estimated_minutes,
             actual_minutes=t.actual_minutes,
-            completion_percent=(t.actual_minutes / t.estimated_minutes * 100) if t.estimated_minutes > 0 else 0
+            completion_percent=(t.actual_minutes / t.estimated_minutes * 100) if t.estimated_minutes > 0 else 0,
+            created_at=t.created_at,
         )
         for t in tasks
     ]
@@ -573,7 +760,8 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
             }
             for note in coaching_notes
         ],
-        gantt_data=gantt_data
+        gantt_data=gantt_data,
+        workspace_files=_workspace_files_for_project(project),
     )
 
 
@@ -595,6 +783,88 @@ async def create_task(project_id: str, task_data: dict, db: Session = Depends(ge
     db.add(db_task)
     db.commit()
     return {"id": db_task.id, "status": "created"}
+
+
+@app.post("/api/chat/sync-tasks", response_model=ChatTaskSyncResponse)
+async def sync_chat_tasks(req: ChatTaskSyncRequest, db: Session = Depends(get_db)):
+    """Turn an assistant task breakdown into persisted dashboard tasks and workspace files."""
+    from uuid import uuid4
+
+    project = None
+    if req.project_id:
+        project = db.query(Project).filter(Project.id == req.project_id).first()
+
+    if not project:
+        base_name = (req.project_name or "").strip() or "对话任务拆分"
+        project = Project(
+            id=str(uuid4()),
+            name=base_name[:80],
+            description="从对话同步生成的任务拆分项目",
+            domain="chat_task_breakdown",
+            vault_path=str(Path.home() / ".coach" / "workspaces" / _safe_project_name(base_name)),
+            cache_path=f"{Path.home()}/.coach/{_safe_project_name(base_name)}.db",
+        )
+        db.add(project)
+        db.flush()
+
+    parsed_tasks = _parse_tasks_from_markdown(req.content)
+    existing_titles = {
+        (task.title or "").strip().lower()
+        for task in db.query(TaskRecord).filter(TaskRecord.project_id == project.id).all()
+    }
+
+    created = []
+    skipped_count = 0
+    for parsed in parsed_tasks:
+        title_key = parsed["title"].strip().lower()
+        if not title_key or title_key in existing_titles:
+            skipped_count += 1
+            continue
+        task = TaskRecord(
+            id=str(uuid4()),
+            project_id=project.id,
+            title=parsed["title"],
+            description=parsed["description"],
+            phase=parsed["phase"],
+            status="pending",
+            estimated_minutes=parsed["estimated_minutes"],
+            actual_minutes=0,
+            verification_criteria=json.dumps({"source": "chat_sync"}, ensure_ascii=False),
+        )
+        db.add(task)
+        created.append(task)
+        existing_titles.add(title_key)
+
+    db.commit()
+    db.refresh(project)
+
+    all_tasks = db.query(TaskRecord).filter(TaskRecord.project_id == project.id).all()
+    workspace_files = _write_workspace_files(project, all_tasks, req.content)
+    db.add(project)
+    db.commit()
+
+    task_responses = [
+        TaskResponse(
+            id=t.id,
+            title=t.title,
+            description=t.description,
+            phase=t.phase,
+            status=t.status,
+            estimated_minutes=t.estimated_minutes,
+            actual_minutes=t.actual_minutes,
+            completion_percent=(t.actual_minutes / t.estimated_minutes * 100) if t.estimated_minutes > 0 else 0,
+            created_at=t.created_at,
+        )
+        for t in all_tasks
+    ]
+
+    return ChatTaskSyncResponse(
+        project=ProjectResponse.from_orm(project),
+        tasks=task_responses,
+        workspace_files=workspace_files,
+        created_count=len(created),
+        skipped_count=skipped_count,
+    )
 
 
 @app.post("/api/time-logs")
