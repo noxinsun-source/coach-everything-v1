@@ -9,12 +9,22 @@ class DashboardUI {
         this.chatHistory = [];
         this.pomodoroWebSocket = null;
         this.timerInterval = null;
-        this.timeRemaining = 25 * 60; // 25 minutes in seconds
+        this.focusDurationMinutes = this.readStoredPomodoroDuration();
+        this.breakDurationMinutes = 5;
+        this.longBreakDurationMinutes = 15;
+        this.currentBreakDurationMinutes = this.breakDurationMinutes;
+        this.currentPhaseDurationSeconds = this.focusDurationMinutes * 60;
+        this.timeRemaining = this.currentPhaseDurationSeconds;
         this.isTimerRunning = false;
         this.currentPhase = 'work'; // 'work' or 'break'
         this.pomodorosCompleted = 0;
+        this.totalFocusMinutes = 0;
+        this.timerViewMode = this.readStoredTimerViewMode();
+        this.analyticsDataMode = 'auto';
+        this.pieChartInstance = null;
 
         this.initializeElements();
+        this.initializeTimerControls();
         this.attachEventListeners();
     }
 
@@ -54,6 +64,14 @@ class DashboardUI {
             chatContextPreview: document.getElementById('chatContextPreview'),
 
             // Timer
+            timerDurationInput: document.getElementById('timerDurationInput'),
+            timerViewTimeBtn: document.getElementById('timerViewTimeBtn'),
+            timerViewRingBtn: document.getElementById('timerViewRingBtn'),
+            timerTimeView: document.getElementById('timerTimeView'),
+            timerRingView: document.getElementById('timerRingView'),
+            timerRing: document.getElementById('timerRing'),
+            timerRingTime: document.getElementById('timerRingTime'),
+            timerRingPhase: document.getElementById('timerRingPhase'),
             timerDisplay: document.getElementById('timerDisplay'),
             timerStatus: document.getElementById('timerStatus'),
             startBtn: document.getElementById('startBtn'),
@@ -114,6 +132,9 @@ class DashboardUI {
             ganttChart: document.getElementById('ganttChart'),
             pieChartCanvas: document.getElementById('pieChartCanvas'),
             statsTableBody: document.getElementById('statsTableBody'),
+            analyticsModeLabel: document.getElementById('analyticsModeLabel'),
+            loadDemoAnalyticsBtn: document.getElementById('loadDemoAnalyticsBtn'),
+            clearAnalyticsDataBtn: document.getElementById('clearAnalyticsDataBtn'),
         };
     }
 
@@ -177,6 +198,15 @@ class DashboardUI {
         this.elements.startBtn.addEventListener('click', () => this.startTimer());
         this.elements.pauseBtn.addEventListener('click', () => this.pauseTimer());
         this.elements.resetBtn.addEventListener('click', () => this.resetTimer());
+        if (this.elements.timerDurationInput) {
+            this.elements.timerDurationInput.addEventListener('change', () => this.handleTimerDurationChange());
+        }
+        if (this.elements.timerViewTimeBtn) {
+            this.elements.timerViewTimeBtn.addEventListener('click', () => this.setTimerViewMode('time'));
+        }
+        if (this.elements.timerViewRingBtn) {
+            this.elements.timerViewRingBtn.addEventListener('click', () => this.setTimerViewMode('ring'));
+        }
 
         // Panel expansion
         this.elements.expandLeftBtn.addEventListener('click', () => this.toggleLeftPanelExpand());
@@ -184,6 +214,12 @@ class DashboardUI {
 
         // Analytics
         this.elements.viewAnalyticsBtn.addEventListener('click', () => this.showAnalytics());
+        if (this.elements.loadDemoAnalyticsBtn) {
+            this.elements.loadDemoAnalyticsBtn.addEventListener('click', () => this.setAnalyticsMode('demo'));
+        }
+        if (this.elements.clearAnalyticsDataBtn) {
+            this.elements.clearAnalyticsDataBtn.addEventListener('click', () => this.setAnalyticsMode('empty'));
+        }
 
         // Task filters
         this.elements.taskFilters.forEach((btn) => {
@@ -215,6 +251,90 @@ class DashboardUI {
         // Load initial data
         this.loadProjects();
         this.loadSettings();
+    }
+
+    readStoredPomodoroDuration() {
+        const stored = localStorage.getItem('coachFocusDurationMinutes');
+        return this.clampDurationMinutes(stored || 25);
+    }
+
+    readStoredTimerViewMode() {
+        const stored = localStorage.getItem('coachTimerViewMode');
+        return stored === 'ring' ? 'ring' : 'time';
+    }
+
+    clampDurationMinutes(value) {
+        const parsed = parseInt(value, 10);
+        if (Number.isNaN(parsed)) return 25;
+        return Math.min(240, Math.max(1, parsed));
+    }
+
+    initializeTimerControls() {
+        if (this.elements.timerDurationInput) {
+            this.elements.timerDurationInput.value = this.focusDurationMinutes;
+        }
+        if (this.elements.pauseBtn) {
+            this.elements.pauseBtn.disabled = true;
+        }
+        this.setTimerViewMode(this.timerViewMode);
+        this.updatePomodoroStatsDisplay();
+        this.updateTimerDisplay();
+    }
+
+    handleTimerDurationChange() {
+        if (!this.elements.timerDurationInput) return;
+        const previousDurationSeconds = this.currentPhaseDurationSeconds || this.focusDurationMinutes * 60;
+        const nextDuration = this.clampDurationMinutes(this.elements.timerDurationInput.value);
+
+        this.focusDurationMinutes = nextDuration;
+        this.elements.timerDurationInput.value = nextDuration;
+        localStorage.setItem('coachFocusDurationMinutes', String(nextDuration));
+
+        if (this.currentPhase === 'work') {
+            const nextDurationSeconds = nextDuration * 60;
+            const elapsedSeconds = this.isTimerRunning
+                ? Math.max(0, previousDurationSeconds - this.timeRemaining)
+                : 0;
+            this.currentPhaseDurationSeconds = nextDurationSeconds;
+            this.timeRemaining = this.isTimerRunning
+                ? Math.max(1, nextDurationSeconds - elapsedSeconds)
+                : nextDurationSeconds;
+            if (!this.isTimerRunning) {
+                this.elements.timerStatus.textContent = '准备就绪';
+            }
+        }
+
+        this.updateTimerDisplay();
+    }
+
+    setTimerViewMode(mode) {
+        this.timerViewMode = mode === 'ring' ? 'ring' : 'time';
+        localStorage.setItem('coachTimerViewMode', this.timerViewMode);
+
+        const isRing = this.timerViewMode === 'ring';
+        this.elements.timerTimeView?.classList.toggle('hidden', isRing);
+        this.elements.timerRingView?.classList.toggle('hidden', !isRing);
+        this.elements.timerViewTimeBtn?.classList.toggle('active', !isRing);
+        this.elements.timerViewRingBtn?.classList.toggle('active', isRing);
+        this.elements.timerViewTimeBtn?.setAttribute('aria-pressed', String(!isRing));
+        this.elements.timerViewRingBtn?.setAttribute('aria-pressed', String(isRing));
+        this.updateTimerDisplay();
+    }
+
+    formatMinutes(totalMinutes) {
+        const roundedMinutes = Math.max(0, Math.round(totalMinutes || 0));
+        const hours = Math.floor(roundedMinutes / 60);
+        const minutes = roundedMinutes % 60;
+        return `${hours}h ${minutes}m`;
+    }
+
+    updatePomodoroStatsDisplay() {
+        if (this.elements.todayPomodoros) {
+            this.elements.todayPomodoros.textContent = this.pomodorosCompleted;
+        }
+        if (this.elements.totalHours) {
+            this.elements.totalHours.textContent = this.formatMinutes(this.totalFocusMinutes);
+        }
     }
 
     // ========== Project Management ==========
@@ -256,8 +376,9 @@ class DashboardUI {
             this.elements.progressFill.style.width = `${progress}%`;
 
             // Update stats
-            this.elements.totalHours.textContent = `${dashboardData.time_stats.total_hours.toFixed(1)}h`;
-            this.elements.todayPomodoros.textContent = dashboardData.time_stats.pomodoros_count;
+            this.totalFocusMinutes = Math.round((dashboardData.time_stats.total_hours || 0) * 60);
+            this.pomodorosCompleted = dashboardData.time_stats.pomodoros_count || 0;
+            this.updatePomodoroStatsDisplay();
 
             // Render tasks
             this.renderTasks(dashboardData.tasks);
@@ -280,6 +401,7 @@ class DashboardUI {
 
             // Store dashboard data for analytics
             this.currentDashboardData = dashboardData;
+            this.analyticsDataMode = 'auto';
         } catch (error) {
             console.error('Failed to load project:', error);
             this.showNotification('Failed to load project', 'error');
@@ -568,6 +690,12 @@ class DashboardUI {
 
     startTimer() {
         if (this.isTimerRunning) return;
+        if (this.timeRemaining <= 0) {
+            this.currentPhaseDurationSeconds = this.currentPhase === 'work'
+                ? this.focusDurationMinutes * 60
+                : this.currentBreakDurationMinutes * 60;
+            this.timeRemaining = this.currentPhaseDurationSeconds;
+        }
 
         this.isTimerRunning = true;
         this.elements.startBtn.disabled = true;
@@ -600,7 +728,10 @@ class DashboardUI {
         this.isTimerRunning = false;
         clearInterval(this.timerInterval);
 
-        this.timeRemaining = this.currentPhase === 'work' ? 25 * 60 : 5 * 60;
+        this.currentPhaseDurationSeconds = this.currentPhase === 'work'
+            ? this.focusDurationMinutes * 60
+            : this.currentBreakDurationMinutes * 60;
+        this.timeRemaining = this.currentPhaseDurationSeconds;
         this.updateTimerDisplay();
 
         this.elements.startBtn.disabled = false;
@@ -614,10 +745,23 @@ class DashboardUI {
 
         if (this.currentPhase === 'work') {
             this.pomodorosCompleted++;
-            this.elements.todayPomodoros.textContent = this.pomodorosCompleted;
+            this.totalFocusMinutes += this.focusDurationMinutes;
+            this.updatePomodoroStatsDisplay();
+            if (this.currentDashboardData?.time_stats) {
+                const stats = this.currentDashboardData.time_stats;
+                stats.total_hours = this.totalFocusMinutes / 60;
+                stats.pomodoros_count = this.pomodorosCompleted;
+                stats.average_duration = this.pomodorosCompleted > 0
+                    ? this.totalFocusMinutes / this.pomodorosCompleted
+                    : 0;
+            }
 
             // Determine break duration
-            const breakDuration = this.pomodorosCompleted % 4 === 0 ? 15 : 5;
+            const breakDuration = this.pomodorosCompleted % 4 === 0
+                ? this.longBreakDurationMinutes
+                : this.breakDurationMinutes;
+            this.currentBreakDurationMinutes = breakDuration;
+            this.currentPhaseDurationSeconds = breakDuration * 60;
             this.timeRemaining = breakDuration * 60;
             this.currentPhase = 'break';
 
@@ -631,15 +775,17 @@ class DashboardUI {
                 api.logTime({
                     task_id: this.currentTaskId || '',
                     project_id: this.currentProjectId,
-                    duration_minutes: 25,
+                    duration_minutes: this.focusDurationMinutes,
                     pomodoros: 1,
                     completed: false,
                 }).catch(console.error);
             }
         } else {
             // Break completed
-            this.timeRemaining = 25 * 60;
+            this.currentPhaseDurationSeconds = this.focusDurationMinutes * 60;
+            this.timeRemaining = this.currentPhaseDurationSeconds;
             this.currentPhase = 'work';
+            this.currentBreakDurationMinutes = this.breakDurationMinutes;
             this.showNotification('✅ 休息结束，准备好继续工作！', 'success');
         }
 
@@ -651,8 +797,20 @@ class DashboardUI {
     updateTimerDisplay() {
         const minutes = Math.floor(this.timeRemaining / 60);
         const seconds = this.timeRemaining % 60;
-        this.elements.timerDisplay.textContent =
-            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        const timeText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        this.elements.timerDisplay.textContent = timeText;
+        if (this.elements.timerRingTime) {
+            this.elements.timerRingTime.textContent = timeText;
+        }
+        if (this.elements.timerRingPhase) {
+            this.elements.timerRingPhase.textContent = this.currentPhase === 'work' ? '专注' : '休息';
+        }
+        if (this.elements.timerRing) {
+            const progress = this.currentPhaseDurationSeconds > 0
+                ? Math.max(0, Math.min(100, (this.timeRemaining / this.currentPhaseDurationSeconds) * 100))
+                : 0;
+            this.elements.timerRing.style.setProperty('--timer-progress', progress.toFixed(2));
+        }
 
         if (this.isTimerRunning) {
             this.elements.timerStatus.textContent =
@@ -706,22 +864,128 @@ class DashboardUI {
     // ========== Analytics ==========
 
     async showAnalytics() {
-        if (!this.currentDashboardData) return;
-
         const modal = this.elements.analyticsModal;
         modal.classList.add('active');
+        this.renderAnalyticsModal();
+    }
 
-        const stats = this.currentDashboardData.time_stats;
+    setAnalyticsMode(mode) {
+        this.analyticsDataMode = mode;
+        this.renderAnalyticsModal();
+    }
+
+    getEmptyAnalyticsData() {
+        return {
+            tasks: [],
+            gantt_data: { tasks: [] },
+            time_stats: {
+                total_hours: 0,
+                average_duration: 0,
+                pomodoros_count: 0,
+                on_time_percent: 0,
+                fastest_task: '',
+                slowest_task: '',
+            },
+        };
+    }
+
+    getDemoAnalyticsData() {
+        const tasks = [
+            {
+                id: 'demo-1',
+                title: '确定研究问题',
+                status: 'completed',
+                estimated_minutes: 60,
+                actual_minutes: 52,
+                phase: '准备',
+            },
+            {
+                id: 'demo-2',
+                title: '文献调研与笔记整理',
+                status: 'completed',
+                estimated_minutes: 120,
+                actual_minutes: 135,
+                phase: '调研',
+            },
+            {
+                id: 'demo-3',
+                title: '实验方案设计',
+                status: 'in_progress',
+                estimated_minutes: 90,
+                actual_minutes: 65,
+                phase: '方案',
+            },
+            {
+                id: 'demo-4',
+                title: '结果图表草稿',
+                status: 'pending',
+                estimated_minutes: 75,
+                actual_minutes: 0,
+                phase: '写作',
+            },
+        ];
+        const totalMinutes = tasks.reduce((sum, task) => sum + (task.actual_minutes || 0), 0);
+        const completedTasks = tasks.filter((task) => task.status === 'completed');
+
+        return {
+            tasks,
+            time_stats: {
+                total_hours: totalMinutes / 60,
+                average_duration: totalMinutes / tasks.filter((task) => task.actual_minutes > 0).length,
+                pomodoros_count: Math.round(totalMinutes / this.focusDurationMinutes),
+                on_time_percent: 50,
+                fastest_task: completedTasks[0]?.title || '',
+                slowest_task: completedTasks[1]?.title || '',
+            },
+            gantt_data: {
+                tasks: tasks
+                    .filter((task) => task.actual_minutes > 0)
+                    .map((task) => ({
+                        id: task.id,
+                        name: task.title,
+                        duration: task.actual_minutes,
+                        status: task.status,
+                    })),
+            },
+        };
+    }
+
+    getAnalyticsData() {
+        if (this.analyticsDataMode === 'demo') {
+            return { mode: 'demo', data: this.getDemoAnalyticsData() };
+        }
+        if (this.analyticsDataMode === 'empty') {
+            return { mode: 'empty', data: this.getEmptyAnalyticsData() };
+        }
+        if (this.currentDashboardData) {
+            return { mode: 'live', data: this.currentDashboardData };
+        }
+        return { mode: 'demo', data: this.getDemoAnalyticsData() };
+    }
+
+    renderAnalyticsModal() {
+        const { mode, data } = this.getAnalyticsData();
+        const modeLabels = {
+            live: '项目数据',
+            demo: '模拟数据',
+            empty: '已清空展示',
+        };
+        if (this.elements.analyticsModeLabel) {
+            this.elements.analyticsModeLabel.textContent = modeLabels[mode] || '统计数据';
+        }
+
+        const stats = data.time_stats;
+        const totalMinutes = Math.round((stats.total_hours || 0) * 60);
 
         // Update statistics table
         this.elements.statsTableBody.innerHTML = `
             <tr>
-                <td>总计小时数</td>
-                <td>${stats.total_hours.toFixed(1)}h</td>
+                <td>累计耗时</td>
+                <td>${this.formatMinutes(totalMinutes)}</td>
             </tr>
             <tr>
                 <td>平均任务耗时</td>
-                <td>${stats.average_duration.toFixed(0)} 分钟</td>
+                <td>${Math.round(stats.average_duration || 0)} 分钟</td>
             </tr>
             <tr>
                 <td>番茄钟总数</td>
@@ -742,10 +1006,10 @@ class DashboardUI {
         `;
 
         // Render gantt chart
-        this.renderGanttChart(this.currentDashboardData.gantt_data);
+        this.renderGanttChart(data.gantt_data);
 
         // Render pie chart
-        this.renderPieChart(this.currentDashboardData.tasks);
+        this.renderPieChart(data.tasks);
     }
 
     closeAnalytics() {
@@ -761,10 +1025,30 @@ class DashboardUI {
             return;
         }
 
-        const chart = document.createElement('pre');
-        chart.style.fontSize = '0.85rem';
-        chart.style.overflow = 'auto';
-        chart.textContent = this.generateASCIIGantt(ganttData.tasks);
+        const maxDuration = Math.max(...ganttData.tasks.map((task) => task.duration || 0), 1);
+        const chart = document.createElement('div');
+        chart.className = 'gantt-list';
+
+        ganttData.tasks.forEach((task) => {
+            const duration = task.duration || 0;
+            const width = Math.max(8, Math.round((duration / maxDuration) * 100));
+            const status = ['completed', 'in_progress', 'pending'].includes(task.status)
+                ? task.status
+                : 'pending';
+            const row = document.createElement('div');
+            row.className = 'gantt-row';
+            row.innerHTML = `
+                <div class="gantt-row-header">
+                    <span>${this.escapeHtml(task.name)}</span>
+                    <span>${duration} 分钟</span>
+                </div>
+                <div class="gantt-bar-track">
+                    <div class="gantt-bar gantt-bar-${status}" style="width: ${width}%"></div>
+                </div>
+            `;
+            chart.appendChild(row);
+        });
+
         ganttContainer.appendChild(chart);
     }
 
@@ -784,32 +1068,47 @@ class DashboardUI {
 
     renderPieChart(tasks) {
         const canvas = this.elements.pieChartCanvas;
+        if (!canvas || typeof Chart === 'undefined') return;
         const ctx = canvas.getContext('2d');
+        if (this.pieChartInstance) {
+            this.pieChartInstance.destroy();
+        }
 
-        const statusCounts = {
-            'completed': tasks.filter((t) => t.status === 'completed').length,
-            'in_progress': tasks.filter((t) => t.status === 'in_progress').length,
-            'pending': tasks.filter((t) => t.status === 'pending').length,
-        };
+        const slices = tasks
+            .map((task) => ({
+                label: task.title || task.name || '未命名任务',
+                value: task.actual_minutes || task.duration || task.estimated_minutes || 0,
+            }))
+            .filter((task) => task.value > 0)
+            .slice(0, 6);
 
-        new Chart(ctx, {
+        const hasData = slices.length > 0;
+        const labels = hasData ? slices.map((task) => task.label) : ['暂无数据'];
+        const values = hasData ? slices.map((task) => task.value) : [1];
+
+        this.pieChartInstance = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: ['已完成', '进行中', '待办'],
+                labels,
                 datasets: [
                     {
-                        data: [
-                            statusCounts.completed,
-                            statusCounts.in_progress,
-                            statusCounts.pending,
-                        ],
-                        backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+                        data: values,
+                        backgroundColor: hasData
+                            ? ['#7dd3fc', '#a7f3d0', '#fde68a', '#c4b5fd', '#fda4af', '#93c5fd']
+                            : ['#e5e7eb'],
+                        borderWidth: 0,
                     },
                 ],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: true,
+                cutout: '58%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                    },
+                },
             },
         });
     }

@@ -44,7 +44,35 @@
                 </div>
 
                 <div class="pomodoro-widget">
-                    <div class="timer-display" id="timerDisplay">25:00</div>
+                    <div class="timer-settings-row">
+                        <label class="timer-duration-control" for="timerDurationInput">
+                            <span>专注时长</span>
+                            <span class="duration-input-wrap">
+                                <input id="timerDurationInput" type="number" min="1" max="240" step="1" value="25">
+                                <span>分钟</span>
+                            </span>
+                        </label>
+                        <div class="timer-view-toggle" role="group" aria-label="番茄钟显示方式">
+                            <button class="timer-view-btn active" id="timerViewTimeBtn" type="button" aria-pressed="true" title="数字计时">
+                                <i class="fas fa-clock"></i>
+                            </button>
+                            <button class="timer-view-btn" id="timerViewRingBtn" type="button" aria-pressed="false" title="圆环计时">
+                                <i class="fas fa-chart-pie"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="timer-visual timer-visual-time" id="timerTimeView">
+                        <div class="timer-display" id="timerDisplay">25:00</div>
+                    </div>
+                    <div class="timer-visual timer-visual-ring hidden" id="timerRingView">
+                        <div class="timer-ring" id="timerRing" style="--timer-progress: 100;">
+                            <div class="timer-ring-center">
+                                <div class="timer-ring-time" id="timerRingTime">25:00</div>
+                                <div class="timer-ring-phase" id="timerRingPhase">专注</div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="timer-status" id="timerStatus">准备就绪</div>
 
                     <div class="timer-controls">
@@ -60,7 +88,7 @@
                         </div>
                         <div class="stat-item">
                             <span class="stat-label">累计耗时:</span>
-                            <span class="stat-value" id="totalHours">0h</span>
+                            <span class="stat-value" id="totalHours">0h 0m</span>
                         </div>
                     </div>
 
@@ -335,6 +363,17 @@
                 <button class="close-btn" id="closeAnalyticsBtn">&times;</button>
             </div>
             <div class="modal-body">
+                <div class="analytics-toolbar">
+                    <span class="analytics-mode-label" id="analyticsModeLabel">模拟数据</span>
+                    <div class="analytics-actions">
+                        <button class="btn btn-secondary" id="loadDemoAnalyticsBtn" type="button">
+                            <i class="fas fa-vial"></i> 模拟数据
+                        </button>
+                        <button class="btn btn-outline" id="clearAnalyticsDataBtn" type="button">
+                            <i class="fas fa-eraser"></i> 清空展示
+                        </button>
+                    </div>
+                </div>
                 <div class="analytics-grid">
                     <!-- Gantt Chart -->
                     <section class="analytics-section">
@@ -364,8 +403,8 @@
                             </thead>
                             <tbody id="statsTableBody">
                                 <tr>
-                                    <td>总计小时数</td>
-                                    <td id="totalHoursStat">0h</td>
+                                    <td>累计耗时</td>
+                                    <td id="totalHoursStat">0h 0m</td>
                                 </tr>
                                 <tr>
                                     <td>平均任务耗时</td>
