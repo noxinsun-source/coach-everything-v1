@@ -22,6 +22,8 @@ class DashboardUI {
         this.timerViewMode = this.readStoredTimerViewMode();
         this.analyticsDataMode = 'auto';
         this.pieChartInstance = null;
+        this.isChatRunning = false;
+        this.chatRuntimeHideTimer = null;
 
         this.initializeElements();
         this.initializeTimerControls();
@@ -59,6 +61,12 @@ class DashboardUI {
             chatModelSummary: document.getElementById('chatModelSummary'),
             chatClearBtn: document.getElementById('chatClearBtn'),
             chatMessages: document.getElementById('chatMessages'),
+            chatRuntime: document.getElementById('chatRuntime'),
+            chatRuntimeIcon: document.getElementById('chatRuntimeIcon'),
+            chatRuntimeText: document.getElementById('chatRuntimeText'),
+            chatRuntimeToggle: document.getElementById('chatRuntimeToggle'),
+            chatRuntimeTrace: document.getElementById('chatRuntimeTrace'),
+            chatRuntimeTraceList: document.getElementById('chatRuntimeTraceList'),
             chatInput: document.getElementById('chatInput'),
             chatSendBtn: document.getElementById('chatSendBtn'),
             chatContextPreview: document.getElementById('chatContextPreview'),
@@ -160,6 +168,9 @@ class DashboardUI {
         }
         if (this.elements.chatSettingsBtn) {
             this.elements.chatSettingsBtn.addEventListener('click', () => this.toggleChatSettings());
+        }
+        if (this.elements.chatRuntimeToggle) {
+            this.elements.chatRuntimeToggle.addEventListener('click', () => this.toggleChatRuntimeTrace());
         }
         if (this.elements.chatInput) {
             this.elements.chatInput.addEventListener('keydown', (e) => {
@@ -596,23 +607,155 @@ class DashboardUI {
         this.elements.chatModelSummary.textContent = `${providerLabel} · ${model || '默认模型'} · ${modeLabel}`;
     }
 
+    setChatRuntimeState(state, message) {
+        if (!this.elements.chatRuntime || !this.elements.chatRuntimeText) return;
+        clearTimeout(this.chatRuntimeHideTimer);
+        this.elements.chatRuntime.hidden = false;
+        this.elements.chatRuntime.dataset.state = state;
+        this.elements.chatRuntimeText.textContent = message;
+    }
+
+    hideChatRuntime(delayMs = 900) {
+        clearTimeout(this.chatRuntimeHideTimer);
+        this.chatRuntimeHideTimer = setTimeout(() => {
+            if (this.elements.chatRuntime) {
+                this.elements.chatRuntime.hidden = true;
+            }
+        }, delayMs);
+    }
+
+    resetChatRuntime() {
+        clearTimeout(this.chatRuntimeHideTimer);
+        if (this.elements.chatRuntimeTraceList) {
+            this.elements.chatRuntimeTraceList.innerHTML = '';
+        }
+        if (this.elements.chatRuntimeTrace) {
+            this.elements.chatRuntimeTrace.hidden = true;
+        }
+        if (this.elements.chatRuntimeToggle) {
+            this.elements.chatRuntimeToggle.setAttribute('aria-expanded', 'false');
+            this.elements.chatRuntimeToggle.textContent = '过程';
+        }
+    }
+
+    toggleChatRuntimeTrace() {
+        if (!this.elements.chatRuntimeTrace || !this.elements.chatRuntimeToggle) return;
+        const shouldOpen = this.elements.chatRuntimeTrace.hidden;
+        this.elements.chatRuntimeTrace.hidden = !shouldOpen;
+        this.elements.chatRuntimeToggle.setAttribute('aria-expanded', String(shouldOpen));
+        this.elements.chatRuntimeToggle.textContent = shouldOpen ? '折叠' : '过程';
+    }
+
+    addChatTrace(message, state = 'running', meta = '') {
+        if (!this.elements.chatRuntimeTraceList || !message) return;
+
+        const item = document.createElement('div');
+        item.className = `chat-trace-item chat-trace-${state}`;
+
+        const time = new Date().toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
+
+        const prefix = document.createElement('span');
+        prefix.className = 'chat-trace-time';
+        prefix.textContent = time;
+
+        const content = document.createElement('span');
+        content.className = 'chat-trace-content';
+        content.textContent = meta ? `${meta}: ${message}` : message;
+
+        item.appendChild(prefix);
+        item.appendChild(content);
+        this.elements.chatRuntimeTraceList.appendChild(item);
+
+        const items = this.elements.chatRuntimeTraceList.querySelectorAll('.chat-trace-item');
+        if (items.length > 80) {
+            items[0].remove();
+        }
+        this.elements.chatRuntimeTraceList.scrollTop = this.elements.chatRuntimeTraceList.scrollHeight;
+    }
+
+    normalizeChatError(error) {
+        const message = String(error?.message || error || '未知错误');
+        if (message.includes('Failed to fetch')) {
+            return '连接失败：请确认后端正在运行，并用 http://127.0.0.1:8001/ 打开页面';
+        }
+        if (message.includes('cli_not_found') || message.includes('CLI not found')) {
+            return '本地 CLI 未找到：请检查 Claude Code / Codex 命令配置';
+        }
+        if (message.includes('timeout')) {
+            return '模型请求超时：CLI 长时间没有返回';
+        }
+        return message;
+    }
+
     async sendChat() {
         if (!this.elements.chatInput) return;
+        if (this.isChatRunning) return;
         const text = (this.elements.chatInput.value || '').trim();
         if (!text) return;
         this.elements.chatInput.value = '';
         this.appendChatMessage('user', text);
         this.updateChatContextPreview();
 
+        this.isChatRunning = true;
+        this.elements.chatSendBtn.disabled = true;
+        this.resetChatRuntime();
+        this.setChatRuntimeState('running', '正在发送到模型...');
+        this.addChatTrace('请求已进入发送队列', 'running');
+
+        let finalContent = '';
+        let streamError = null;
+
         try {
             const payload = this.buildChatPayload();
-            const res = await api.chat(payload);
-            this.appendChatMessage('assistant', res.message.content || '');
+            await api.chatStream(payload, {
+                status: (data) => {
+                    const message = data.message || '模型正在运行中';
+                    this.setChatRuntimeState('running', message);
+                    this.addChatTrace(message, 'running', data.stage || 'status');
+                },
+                trace: (data) => {
+                    const message = data.message || '';
+                    const state = /error|failed|fail|timeout|reconnect|network/i.test(message)
+                        ? 'warning'
+                        : 'running';
+                    this.setChatRuntimeState(state === 'warning' ? 'warning' : 'running', message || '模型过程更新');
+                    this.addChatTrace(message, state, data.source || 'process');
+                },
+                message: (data) => {
+                    finalContent = data.content || '';
+                },
+                error: (data) => {
+                    streamError = new Error(data.message || '模型请求失败');
+                    this.setChatRuntimeState('error', this.normalizeChatError(streamError));
+                    this.addChatTrace(this.normalizeChatError(streamError), 'error', data.code || 'error');
+                },
+                done: (data) => {
+                    this.setChatRuntimeState('done', data.message || '模型回答完成');
+                    this.addChatTrace(data.message || '模型回答完成', 'done');
+                },
+            });
+
+            if (streamError) {
+                throw streamError;
+            }
+            this.appendChatMessage('assistant', finalContent || '模型没有返回文本内容。');
             this.updateChatContextPreview();
+            this.setChatRuntimeState('done', '回答完成');
+            this.hideChatRuntime();
         } catch (error) {
             console.error('Chat failed:', error);
-            this.appendChatMessage('assistant', `请求失败：${error.message || error}`);
+            const readableError = this.normalizeChatError(error);
+            this.setChatRuntimeState('error', readableError);
+            this.addChatTrace(readableError, 'error', 'request');
+            this.appendChatMessage('assistant', `请求失败：${readableError}`);
             this.showNotification('对话请求失败', 'error');
+        } finally {
+            this.isChatRunning = false;
+            this.elements.chatSendBtn.disabled = false;
         }
     }
 

@@ -4,7 +4,7 @@ FastAPI server for dashboard functionality
 """
 
 from fastapi import FastAPI, WebSocket, HTTPException, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Column, String, DateTime, Integer, Float, create_engine
@@ -18,6 +18,7 @@ import json
 import os
 import shlex
 import subprocess
+import time
 from pathlib import Path
 
 DEFAULT_PROVIDER = "claude_code"
@@ -40,7 +41,15 @@ app = FastAPI(title="Coach Everything Dashboard", version="1.0.0")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["localhost", "127.0.0.1"],
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8001",
+        "null",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -322,6 +331,123 @@ def _run_cli(command_template: str, model: Optional[str], prompt: str, timeout_s
 
     out = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
     return out
+
+
+def _sse(event: str, data: dict) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _iter_cli_stream(command_template: str, model: Optional[str], prompt: str, timeout_seconds: int):
+    template = (command_template or "").strip()
+    if not template:
+        yield _sse("error", {"message": "CLI command not configured", "code": "cli_command_not_configured"})
+        return
+
+    cmd_str = template.format_map(_SafeFormatDict(model=model or ""))
+    argv = shlex.split(cmd_str)
+    if not argv:
+        yield _sse("error", {"message": "CLI command not configured", "code": "cli_command_not_configured"})
+        return
+
+    yield _sse("status", {"message": "正在启动本地 CLI", "stage": "starting_cli"})
+
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+        )
+    except FileNotFoundError:
+        yield _sse("error", {"message": "CLI not found", "code": "cli_not_found"})
+        return
+
+    stdout_chunks = []
+    stderr_chunks = []
+    streams = {}
+    if proc.stdout:
+        os.set_blocking(proc.stdout.fileno(), False)
+        streams[proc.stdout.fileno()] = "stdout"
+    if proc.stderr:
+        os.set_blocking(proc.stderr.fileno(), False)
+        streams[proc.stderr.fileno()] = "stderr"
+
+    if proc.stdin:
+        try:
+            proc.stdin.write(prompt.encode("utf-8"))
+            proc.stdin.close()
+        except BrokenPipeError:
+            yield _sse("trace", {"message": "CLI closed stdin before receiving the full prompt", "source": "process"})
+
+    started_at = time.monotonic()
+    last_status_at = started_at
+    yield _sse("status", {"message": "已发送请求，等待模型输出", "stage": "waiting"})
+
+    while proc.poll() is None or streams:
+        now = time.monotonic()
+        if proc.poll() is None and now - started_at > timeout_seconds:
+            proc.kill()
+            yield _sse("error", {"message": f"CLI timeout after {timeout_seconds}s", "code": "cli_timeout"})
+            return
+
+        ready = []
+        if streams:
+            try:
+                import select
+                ready, _, _ = select.select(list(streams.keys()), [], [], 0.25)
+            except OSError:
+                ready = []
+        else:
+            time.sleep(0.1)
+
+        for fd in ready:
+            stream_name = streams.get(fd)
+            try:
+                chunk = os.read(fd, 4096)
+            except BlockingIOError:
+                continue
+
+            if not chunk:
+                streams.pop(fd, None)
+                continue
+
+            text = chunk.decode("utf-8", errors="replace")
+            if stream_name == "stdout":
+                stdout_chunks.append(text)
+            else:
+                stderr_chunks.append(text)
+                for line in text.replace("\r", "\n").splitlines():
+                    clean_line = line.strip()
+                    if clean_line:
+                        yield _sse("trace", {"message": clean_line, "source": "stderr"})
+
+        if proc.poll() is None and now - last_status_at >= 3:
+            elapsed = int(now - started_at)
+            last_status_at = now
+            yield _sse(
+                "status",
+                {"message": f"模型仍在运行中，已等待 {elapsed}s", "stage": "waiting", "elapsed_seconds": elapsed},
+            )
+
+    return_code = proc.returncode
+    out = "".join(stdout_chunks).strip()
+    err = "".join(stderr_chunks).strip()
+
+    if return_code != 0:
+        yield _sse(
+            "error",
+            {
+                "message": f"CLI exited with code {return_code}: {err[-800:] or 'no stderr output'}",
+                "code": "cli_failed",
+                "return_code": return_code,
+            },
+        )
+        return
+
+    yield _sse("message", {"content": out})
+    yield _sse("done", {"message": "模型回答完成"})
 
 
 # Dependency
@@ -638,6 +764,54 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         model=model,
         message=ChatMessage(role="assistant", content=out),
     )
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest, db: Session = Depends(get_db)):
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    if not settings:
+        settings = UserSettings(id="default")
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+
+    provider = (req.provider or settings.llm_provider or "").strip()
+    model = (req.model or settings.llm_model or "").strip() or None
+    timeout_seconds = int(settings.cli_timeout_seconds or 120)
+    system_prompt = _build_system_prompt(req.mode, req.system_prompt)
+    prompt = _render_prompt(system_prompt, req.messages)
+
+    if provider in ("claude_code", "claude"):
+        command_template = settings.cli_claude_command or DEFAULT_CLAUDE_CLI_COMMAND
+    elif provider in ("codex", "codex_cli"):
+        command_template = settings.cli_codex_command or DEFAULT_CODEX_CLI_COMMAND
+    elif provider == "mock":
+        def mock_stream():
+            yield _sse("status", {"message": "已连接 mock provider", "stage": "connected"})
+            yield _sse("trace", {"message": "mock provider 正在生成回答", "source": "mock"})
+            last_user = ""
+            for m in reversed(req.messages):
+                if m.role == "user":
+                    last_user = m.content
+                    break
+            yield _sse("message", {"content": f"mock: {last_user}".strip()})
+            yield _sse("done", {"message": "模型回答完成"})
+
+        return StreamingResponse(mock_stream(), media_type="text/event-stream")
+    else:
+        def unknown_provider_stream():
+            yield _sse("error", {"message": f"Unknown provider: {provider}", "code": "unknown_provider"})
+
+        return StreamingResponse(unknown_provider_stream(), media_type="text/event-stream")
+
+    def event_stream():
+        yield _sse(
+            "status",
+            {"message": f"正在连接 {provider}", "stage": "connecting", "provider": provider, "model": model},
+        )
+        yield from _iter_cli_stream(command_template, model, prompt, timeout_seconds)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.websocket("/ws/pomodoro/{project_id}")

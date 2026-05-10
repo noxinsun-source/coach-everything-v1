@@ -94,12 +94,8 @@ function initializeDashboard() {
  */
 async function checkAPIConnection() {
     try {
-        const response = await fetch('/api/projects');
-        if (response.ok) {
-            console.log('✅ API backend connected');
-        } else {
-            throw new Error(`API returned ${response.status}`);
-        }
+        await api.getProjects();
+        console.log('✅ API backend connected');
     } catch (error) {
         console.warn('⚠️ API backend not accessible:', error);
         showAPIWarning();

@@ -5,7 +5,13 @@
 
 class CoachAPI {
     constructor(baseURL = '') {
-        this.baseURL = baseURL || (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000');
+        const browserOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+        const browserProtocol = typeof window !== 'undefined' ? window.location.protocol : '';
+        this.baseURL = baseURL || (
+            browserProtocol === 'file:' || !browserOrigin || browserOrigin === 'null'
+                ? 'http://127.0.0.1:8001'
+                : browserOrigin
+        );
         this.defaultHeaders = {
             'Content-Type': 'application/json',
         };
@@ -140,6 +146,80 @@ class CoachAPI {
             method: 'POST',
             body: JSON.stringify(chatData),
         });
+    }
+
+    async chatStream(chatData, handlers = {}) {
+        const response = await fetch(`${this.baseURL}/api/chat/stream`, {
+            method: 'POST',
+            headers: this.defaultHeaders,
+            body: JSON.stringify(chatData),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            let detail = text;
+            try {
+                detail = JSON.parse(text)?.detail || detail;
+            } catch {
+                // Keep raw text.
+            }
+            throw new Error(`API Error: ${response.status} ${detail}`);
+        }
+
+        if (!response.body) {
+            throw new Error('Streaming is not supported by this browser');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const dispatch = (rawEvent) => {
+            const lines = rawEvent.split('\n');
+            let eventName = 'message';
+            const dataLines = [];
+
+            lines.forEach((line) => {
+                if (line.startsWith('event:')) {
+                    eventName = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trimStart());
+                }
+            });
+
+            if (dataLines.length === 0) return;
+
+            let data = dataLines.join('\n');
+            try {
+                data = JSON.parse(data);
+            } catch {
+                data = { message: data };
+            }
+
+            if (handlers[eventName]) {
+                handlers[eventName](data);
+            }
+            if (handlers.event) {
+                handlers.event(eventName, data);
+            }
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            let boundary = buffer.indexOf('\n\n');
+            while (boundary >= 0) {
+                const rawEvent = buffer.slice(0, boundary).trim();
+                buffer = buffer.slice(boundary + 2);
+                if (rawEvent) dispatch(rawEvent);
+                boundary = buffer.indexOf('\n\n');
+            }
+        }
+
+        const trailing = buffer.trim();
+        if (trailing) dispatch(trailing);
     }
 
     // ========== WebSocket Methods ==========

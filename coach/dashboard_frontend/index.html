@@ -231,6 +231,19 @@
 
                         <div class="chat-messages" id="chatMessages"></div>
 
+                        <div class="chat-runtime" id="chatRuntime" hidden>
+                            <div class="chat-runtime-main">
+                                <span class="chat-runtime-icon" id="chatRuntimeIcon" aria-hidden="true"></span>
+                                <span class="chat-runtime-text" id="chatRuntimeText">正在连接模型...</span>
+                                <button class="chat-runtime-toggle" id="chatRuntimeToggle" type="button" aria-expanded="false">
+                                    过程
+                                </button>
+                            </div>
+                            <div class="chat-runtime-trace" id="chatRuntimeTrace" hidden>
+                                <div class="chat-runtime-trace-list" id="chatRuntimeTraceList"></div>
+                            </div>
+                        </div>
+
                         <div class="chat-composer">
                             <textarea id="chatInput" class="chat-input" rows="3" placeholder="输入你的问题..."></textarea>
                             <button class="btn btn-primary" id="chatSendBtn">发送</button>
