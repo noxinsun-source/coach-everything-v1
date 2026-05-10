@@ -256,9 +256,14 @@
             <aside class="right-panel">
                 <div class="panel-header">
                     <h2>📁 工作区文件</h2>
-                    <button class="expand-btn" id="expandRightBtn" title="展开">
-                        <i class="fas fa-expand"></i>
-                    </button>
+                    <div class="panel-actions">
+                        <button class="expand-btn workspace-action-btn" id="workspaceNewFolderBtn" title="新建文件夹" disabled>
+                            <i class="fas fa-folder-plus"></i>
+                        </button>
+                        <button class="expand-btn" id="expandRightBtn" title="展开">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="workspace-browser" id="workspaceBrowser">
@@ -291,6 +296,14 @@
                     <div class="setting-item">
                         <label for="fontSizeSlider">字体大小: <span id="fontSizeValue">14</span>px</label>
                         <input type="range" id="fontSizeSlider" min="12" max="18" value="14" class="slider">
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>工作区</h3>
+                    <div class="setting-item">
+                        <label for="workspaceRootInput">默认根目录</label>
+                        <input id="workspaceRootInput" class="text-input" placeholder="例如：~/Documents/Coach Workspaces">
                     </div>
                 </div>
 
@@ -449,8 +462,8 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="js/api.js?v=20260510-chat-sync"></script>
-    <script src="js/ui.js?v=20260510-chat-sync"></script>
-    <script src="js/app.js?v=20260510-chat-sync"></script>
+    <script src="js/api.js?v=20260510-workspace"></script>
+    <script src="js/ui.js?v=20260510-workspace"></script>
+    <script src="js/app.js?v=20260510-workspace"></script>
 </body>
 </html>

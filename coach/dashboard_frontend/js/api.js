@@ -81,6 +81,20 @@ class CoachAPI {
         return this.request(`/api/projects/${projectId}/dashboard`);
     }
 
+    async updateProjectWorkspace(projectId, workspaceData) {
+        return this.request(`/api/projects/${projectId}/workspace`, {
+            method: 'PATCH',
+            body: JSON.stringify(workspaceData),
+        });
+    }
+
+    async createWorkspaceFolder(projectId, folderData) {
+        return this.request(`/api/projects/${projectId}/workspace/folders`, {
+            method: 'POST',
+            body: JSON.stringify(folderData),
+        });
+    }
+
     // ========== Task Endpoints ==========
 
     /**
@@ -235,8 +249,10 @@ class CoachAPI {
      * Connect to Pomodoro WebSocket
      */
     connectPomodoroWebSocket(projectId, handlers = {}) {
-        const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = typeof window !== 'undefined' ? window.location.host : '127.0.0.1:8000';
+        const base = new URL(this.baseURL || 'http://127.0.0.1:8001');
+        const browserProtocol = typeof window !== 'undefined' ? window.location.protocol : base.protocol;
+        const proto = (browserProtocol === 'https:' || base.protocol === 'https:') ? 'wss' : 'ws';
+        const host = (typeof window !== 'undefined' && window.location.host) || base.host || '127.0.0.1:8001';
         const wsUrl = `${proto}://${host}/ws/pomodoro/${projectId}`;
         const ws = new WebSocket(wsUrl);
 
@@ -255,7 +271,7 @@ class CoachAPI {
         };
 
         ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+            console.debug('Pomodoro WebSocket error:', error);
             if (handlers.onError) handlers.onError(error);
         };
 

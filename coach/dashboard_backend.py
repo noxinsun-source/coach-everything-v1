@@ -35,6 +35,7 @@ DEFAULT_CODEX_CLI_COMMAND = (
         "--ephemeral --ignore-user-config --ignore-rules --color never -"
     )
 )
+DEFAULT_WORKSPACE_ROOT = Path.home() / ".coach" / "workspaces"
 
 # Initialize FastAPI
 app = FastAPI(title="Coach Everything Dashboard", version="1.0.0")
@@ -152,6 +153,7 @@ class UserSettings(Base):
     cli_claude_command = Column(String, nullable=True)
     cli_codex_command = Column(String, nullable=True)
     cli_timeout_seconds = Column(Integer, nullable=True)
+    workspace_root = Column(String, nullable=True)
 
 
 # Create tables
@@ -165,6 +167,7 @@ def _ensure_user_settings_schema():
         "cli_claude_command": "TEXT",
         "cli_codex_command": "TEXT",
         "cli_timeout_seconds": "INTEGER",
+        "workspace_root": "TEXT",
     }
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
@@ -264,6 +267,7 @@ class DashboardDataResponse(BaseModel):
     time_stats: TimeStatsResponse
     recent_coaching_notes: List[dict]
     gantt_data: dict
+    workspace_root: str
     workspace_files: List[dict] = []
 
 
@@ -298,6 +302,20 @@ class ChatTaskSyncResponse(BaseModel):
     workspace_files: List[dict]
     created_count: int
     skipped_count: int
+
+
+class WorkspaceUpdateRequest(BaseModel):
+    vault_path: Optional[str] = None
+
+
+class WorkspaceFolderCreateRequest(BaseModel):
+    name: str
+
+
+class WorkspaceResponse(BaseModel):
+    project: ProjectResponse
+    workspace_root: str
+    workspace_files: List[dict]
 
 
 class _SafeFormatDict(dict):
@@ -436,33 +454,50 @@ def _safe_project_name(name: str) -> str:
     return cleaned[:60] or "chat-task-plan"
 
 
-def _workspace_path_for_project(project: Project, ensure: bool = True) -> Optional[Path]:
+def _workspace_root_path(settings: Optional[UserSettings] = None) -> Path:
+    raw_root = settings.workspace_root if settings and settings.workspace_root else str(DEFAULT_WORKSPACE_ROOT)
+    return Path(raw_root).expanduser()
+
+
+def _workspace_path_for_project(
+    project: Project,
+    ensure: bool = True,
+    workspace_root: Optional[Path] = None,
+) -> Path:
     if project.vault_path:
         path = Path(project.vault_path).expanduser()
     else:
-        if not ensure:
-            return None
-        path = Path.home() / ".coach" / "workspaces" / _safe_project_name(project.name)
-        project.vault_path = str(path)
+        path = (workspace_root or DEFAULT_WORKSPACE_ROOT) / _safe_project_name(project.name)
+        if ensure:
+            project.vault_path = str(path)
     if ensure:
         path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _workspace_files_for_project(project: Project) -> List[dict]:
-    workspace = _workspace_path_for_project(project, ensure=False)
-    if not workspace or not workspace.exists():
+def _workspace_files_for_project(project: Project, workspace_root: Optional[Path] = None) -> List[dict]:
+    workspace = _workspace_path_for_project(project, ensure=False, workspace_root=workspace_root)
+    if not workspace.exists() or not workspace.is_dir():
         return []
     files = []
-    for name in ("Roadmap.md", "Task Progress.md", "Coach Log.md"):
-        path = workspace / name
-        if path.exists():
-            files.append({"name": name, "path": str(path), "type": "file"})
+    for path in sorted(workspace.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+        if path.name.startswith("."):
+            continue
+        files.append({
+            "name": path.name,
+            "path": str(path),
+            "type": "folder" if path.is_dir() else "file",
+        })
     return files
 
 
-def _write_workspace_files(project: Project, tasks: List[TaskRecord], synced_content: str) -> List[dict]:
-    workspace = _workspace_path_for_project(project)
+def _write_workspace_files(
+    project: Project,
+    tasks: List[TaskRecord],
+    synced_content: str,
+    workspace_root: Optional[Path] = None,
+) -> List[dict]:
+    workspace = _workspace_path_for_project(project, workspace_root=workspace_root)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     roadmap = [f"# {project.name} Roadmap", "", f"Generated: {now}", ""]
@@ -490,7 +525,24 @@ def _write_workspace_files(project: Project, tasks: List[TaskRecord], synced_con
         f.write((synced_content or "").strip())
         f.write("\n")
 
-    return _workspace_files_for_project(project)
+    return _workspace_files_for_project(project, workspace_root=workspace_root)
+
+
+def _workspace_response(project: Project, workspace_root: Path) -> WorkspaceResponse:
+    project_response = ProjectResponse.from_orm(project)
+    project_response.vault_path = str(_workspace_path_for_project(project, ensure=False, workspace_root=workspace_root))
+    return WorkspaceResponse(
+        project=project_response,
+        workspace_root=str(workspace_root),
+        workspace_files=_workspace_files_for_project(project, workspace_root=workspace_root),
+    )
+
+
+def _validate_workspace_directory(path_value: str) -> Path:
+    path = Path(path_value).expanduser()
+    if path.exists() and not path.is_dir():
+        raise HTTPException(status_code=400, detail="Workspace path exists but is not a folder")
+    return path
 
 
 def _run_cli(command_template: str, model: Optional[str], prompt: str, timeout_seconds: int) -> str:
@@ -697,6 +749,10 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    workspace_root = _workspace_root_path(settings)
+    project_response = ProjectResponse.from_orm(project)
+    project_response.vault_path = str(_workspace_path_for_project(project, ensure=False, workspace_root=workspace_root))
 
     tasks = db.query(TaskRecord).filter(TaskRecord.project_id == project_id).all()
     time_logs = db.query(TimeLog).filter(TimeLog.project_id == project_id).all()
@@ -749,7 +805,7 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
     }
 
     return DashboardDataResponse(
-        project=ProjectResponse.from_orm(project),
+        project=project_response,
         tasks=task_responses,
         time_stats=time_stats,
         recent_coaching_notes=[
@@ -761,7 +817,8 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
             for note in coaching_notes
         ],
         gantt_data=gantt_data,
-        workspace_files=_workspace_files_for_project(project),
+        workspace_root=str(workspace_root),
+        workspace_files=_workspace_files_for_project(project, workspace_root=workspace_root),
     )
 
 
@@ -785,11 +842,68 @@ async def create_task(project_id: str, task_data: dict, db: Session = Depends(ge
     return {"id": db_task.id, "status": "created"}
 
 
+@app.patch("/api/projects/{project_id}/workspace", response_model=WorkspaceResponse)
+async def update_project_workspace(project_id: str, req: WorkspaceUpdateRequest, db: Session = Depends(get_db)):
+    """Set or initialize the local workspace folder for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    workspace_root = _workspace_root_path(settings)
+    path_value = (req.vault_path or "").strip()
+    workspace = (
+        _validate_workspace_directory(path_value)
+        if path_value
+        else _workspace_path_for_project(project, ensure=False, workspace_root=workspace_root)
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    project.vault_path = str(workspace)
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return _workspace_response(project, workspace_root)
+
+
+@app.post("/api/projects/{project_id}/workspace/folders", response_model=WorkspaceResponse)
+async def create_workspace_folder(
+    project_id: str,
+    req: WorkspaceFolderCreateRequest,
+    db: Session = Depends(get_db),
+):
+    """Create a single folder inside the project's local workspace."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    folder_name = (req.name or "").strip()
+    if not folder_name or folder_name in {".", ".."} or "/" in folder_name or "\\" in folder_name:
+        raise HTTPException(status_code=400, detail="Folder name must be a single folder name")
+
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    workspace_root = _workspace_root_path(settings)
+    workspace = _workspace_path_for_project(project, workspace_root=workspace_root)
+    target = (workspace / folder_name).resolve()
+    workspace_resolved = workspace.resolve()
+    if target.parent != workspace_resolved:
+        raise HTTPException(status_code=400, detail="Folder must be created inside the workspace")
+    if target.exists() and not target.is_dir():
+        raise HTTPException(status_code=400, detail="A file with that name already exists")
+    target.mkdir(exist_ok=True)
+
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return _workspace_response(project, workspace_root)
+
+
 @app.post("/api/chat/sync-tasks", response_model=ChatTaskSyncResponse)
 async def sync_chat_tasks(req: ChatTaskSyncRequest, db: Session = Depends(get_db)):
     """Turn an assistant task breakdown into persisted dashboard tasks and workspace files."""
     from uuid import uuid4
 
+    settings = db.query(UserSettings).filter(UserSettings.id == "default").first()
+    workspace_root = _workspace_root_path(settings)
     project = None
     if req.project_id:
         project = db.query(Project).filter(Project.id == req.project_id).first()
@@ -801,7 +915,7 @@ async def sync_chat_tasks(req: ChatTaskSyncRequest, db: Session = Depends(get_db
             name=base_name[:80],
             description="从对话同步生成的任务拆分项目",
             domain="chat_task_breakdown",
-            vault_path=str(Path.home() / ".coach" / "workspaces" / _safe_project_name(base_name)),
+            vault_path=str(workspace_root / _safe_project_name(base_name)),
             cache_path=f"{Path.home()}/.coach/{_safe_project_name(base_name)}.db",
         )
         db.add(project)
@@ -839,7 +953,7 @@ async def sync_chat_tasks(req: ChatTaskSyncRequest, db: Session = Depends(get_db
     db.refresh(project)
 
     all_tasks = db.query(TaskRecord).filter(TaskRecord.project_id == project.id).all()
-    workspace_files = _write_workspace_files(project, all_tasks, req.content)
+    workspace_files = _write_workspace_files(project, all_tasks, req.content, workspace_root=workspace_root)
     db.add(project)
     db.commit()
 
@@ -929,6 +1043,9 @@ async def get_settings(db: Session = Depends(get_db)):
     if not settings.cli_timeout_seconds:
         settings.cli_timeout_seconds = 120
         changed = True
+    if not settings.workspace_root:
+        settings.workspace_root = str(DEFAULT_WORKSPACE_ROOT)
+        changed = True
     if changed:
         db.add(settings)
         db.commit()
@@ -945,6 +1062,7 @@ async def get_settings(db: Session = Depends(get_db)):
         "cli_claude_command": settings.cli_claude_command,
         "cli_codex_command": settings.cli_codex_command,
         "cli_timeout_seconds": settings.cli_timeout_seconds,
+        "workspace_root": settings.workspace_root or str(DEFAULT_WORKSPACE_ROOT),
     }
 
 
@@ -960,6 +1078,14 @@ async def update_settings(settings_data: dict, db: Session = Depends(get_db)):
         api_key_value = settings_data.get("llm_api_key")
         settings_data = dict(settings_data)
         settings_data.pop("llm_api_key", None)
+    if "workspace_root" in settings_data:
+        raw_root = (settings_data.get("workspace_root") or "").strip()
+        if raw_root:
+            workspace_root = _validate_workspace_directory(raw_root)
+            workspace_root.mkdir(parents=True, exist_ok=True)
+            settings_data["workspace_root"] = str(workspace_root)
+        else:
+            settings_data["workspace_root"] = str(DEFAULT_WORKSPACE_ROOT)
 
     for key, value in settings_data.items():
         if hasattr(settings, key):

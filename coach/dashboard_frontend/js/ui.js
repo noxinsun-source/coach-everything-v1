@@ -25,6 +25,8 @@ class DashboardUI {
         this.isChatRunning = false;
         this.chatRuntimeHideTimer = null;
         this.lastChatUserText = '';
+        this.currentProject = null;
+        this.currentWorkspaceRoot = '';
 
         this.initializeElements();
         this.initializeTimerControls();
@@ -112,6 +114,7 @@ class DashboardUI {
 
             // File browser
             workspaceBrowser: document.getElementById('workspaceBrowser'),
+            workspaceNewFolderBtn: document.getElementById('workspaceNewFolderBtn'),
             expandRightBtn: document.getElementById('expandRightBtn'),
 
             // Modals
@@ -134,6 +137,7 @@ class DashboardUI {
             cliClaudeCommandInput: document.getElementById('cliClaudeCommandInput'),
             cliCodexCommandInput: document.getElementById('cliCodexCommandInput'),
             cliTimeoutInput: document.getElementById('cliTimeoutInput'),
+            workspaceRootInput: document.getElementById('workspaceRootInput'),
             mcpStatus: document.getElementById('mcpStatus'),
             mcpStatusText: document.getElementById('mcpStatusText'),
 
@@ -153,6 +157,12 @@ class DashboardUI {
             const projectId = e.target.value;
             if (projectId) {
                 this.loadProject(projectId);
+            } else {
+                this.currentProjectId = null;
+                this.currentProject = null;
+                this.elements.emptyState.style.display = 'block';
+                this.elements.projectContent.style.display = 'none';
+                this.renderFileTree(null, [], this.currentWorkspaceRoot);
             }
         });
 
@@ -223,6 +233,9 @@ class DashboardUI {
         // Panel expansion
         this.elements.expandLeftBtn.addEventListener('click', () => this.toggleLeftPanelExpand());
         this.elements.expandRightBtn.addEventListener('click', () => this.toggleRightPanelExpand());
+        if (this.elements.workspaceNewFolderBtn) {
+            this.elements.workspaceNewFolderBtn.addEventListener('click', () => this.focusWorkspaceFolderInput());
+        }
 
         // Analytics
         this.elements.viewAnalyticsBtn.addEventListener('click', () => this.showAnalytics());
@@ -377,6 +390,8 @@ class DashboardUI {
         try {
             this.currentProjectId = projectId;
             const dashboardData = await api.getProjectDashboard(projectId);
+            this.currentProject = dashboardData.project;
+            this.currentWorkspaceRoot = dashboardData.workspace_root || this.currentWorkspaceRoot;
 
             // Update project overview
             this.elements.projectName.textContent = dashboardData.project.name;
@@ -399,7 +414,11 @@ class DashboardUI {
             this.renderCoachingNotes(dashboardData.recent_coaching_notes);
 
             // Render file browser
-            this.renderFileTree(dashboardData.project, dashboardData.workspace_files || []);
+            this.renderFileTree(
+                dashboardData.project,
+                dashboardData.workspace_files || [],
+                dashboardData.workspace_root || this.currentWorkspaceRoot,
+            );
 
             // Show project content
             this.elements.emptyState.style.display = 'none';
@@ -1132,29 +1151,85 @@ class DashboardUI {
 
     // ========== File Tree Rendering ==========
 
-    renderFileTree(project, workspaceFiles = []) {
+    renderFileTree(project, workspaceFiles = [], workspaceRoot = this.currentWorkspaceRoot) {
         const browser = this.elements.workspaceBrowser;
         browser.innerHTML = '';
 
-        const projectPath = project?.vault_path || '';
-        if (projectPath) {
-            const pathInfo = document.createElement('div');
-            pathInfo.className = 'workspace-path';
-            pathInfo.textContent = projectPath;
-            browser.appendChild(pathInfo);
+        const defaultRoot = workspaceRoot || '~/ .coach/workspaces'.replace(' ', '');
+        if (this.elements.workspaceNewFolderBtn) {
+            this.elements.workspaceNewFolderBtn.disabled = !project;
         }
 
-        const files = workspaceFiles.length > 0
-            ? workspaceFiles
-            : [
-                { name: 'Roadmap.md', type: 'file' },
-                { name: 'Task Progress.md', type: 'file' },
-                { name: 'Coach Log.md', type: 'file' },
-            ];
+        if (!project) {
+            browser.innerHTML = `
+                <div class="workspace-meta">
+                    <div class="workspace-meta-row">
+                        <span>默认根目录</span>
+                        <code>${this.escapeHtml(defaultRoot)}</code>
+                    </div>
+                </div>
+                <div class="empty-message">选择项目后显示工作区</div>
+            `;
+            return;
+        }
+
+        const projectPath = project?.vault_path || `${defaultRoot}/${project.name || 'project'}`;
+        const workspacePanel = document.createElement('div');
+        workspacePanel.className = 'workspace-panel';
+        workspacePanel.innerHTML = `
+            <div class="workspace-meta">
+                <div class="workspace-meta-row">
+                    <span>默认根目录</span>
+                    <code>${this.escapeHtml(defaultRoot)}</code>
+                </div>
+                <div class="workspace-meta-row">
+                    <span>当前项目路径</span>
+                    <code>${this.escapeHtml(projectPath)}</code>
+                </div>
+            </div>
+            <div class="workspace-path-editor">
+                <label for="workspaceProjectPathInput">项目本地路径</label>
+                <input id="workspaceProjectPathInput" class="text-input" data-workspace-path-input value="${this.escapeHtml(projectPath)}">
+                <div class="workspace-actions">
+                    <button class="btn btn-secondary" type="button" data-workspace-action="save-path">
+                        <i class="fas fa-save"></i> 保存路径
+                    </button>
+                    <button class="btn btn-secondary" type="button" data-workspace-action="default-path">
+                        <i class="fas fa-home"></i> 使用默认
+                    </button>
+                </div>
+            </div>
+            <div class="workspace-folder-form">
+                <input class="text-input" data-folder-name-input placeholder="文件夹名称">
+                <button class="btn btn-primary" type="button" data-workspace-action="create-folder">
+                    <i class="fas fa-folder-plus"></i> 新建文件夹
+                </button>
+            </div>
+        `;
+        browser.appendChild(workspacePanel);
+
+        workspacePanel
+            .querySelector('[data-workspace-action="save-path"]')
+            ?.addEventListener('click', () => this.saveWorkspacePath());
+        workspacePanel
+            .querySelector('[data-workspace-action="default-path"]')
+            ?.addEventListener('click', () => this.saveWorkspacePath(''));
+        workspacePanel
+            .querySelector('[data-workspace-action="create-folder"]')
+            ?.addEventListener('click', () => this.createWorkspaceFolder());
+
+        if (workspaceFiles.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-message workspace-empty';
+            empty.textContent = '这个工作区还没有文件';
+            browser.appendChild(empty);
+            return;
+        }
+
         const list = document.createElement('ul');
         list.className = 'file-tree';
 
-        files.forEach((file) => {
+        workspaceFiles.forEach((file) => {
             const item = document.createElement('li');
             item.className = `file-item ${file.type || 'file'}`;
             item.title = file.path || file.name;
@@ -1166,6 +1241,56 @@ class DashboardUI {
         });
 
         browser.appendChild(list);
+    }
+
+    applyWorkspaceResponse(response) {
+        this.currentProject = response.project;
+        this.currentWorkspaceRoot = response.workspace_root || this.currentWorkspaceRoot;
+        this.renderFileTree(response.project, response.workspace_files || [], this.currentWorkspaceRoot);
+    }
+
+    focusWorkspaceFolderInput() {
+        if (!this.currentProjectId) {
+            this.showNotification('请先选择项目', 'warning');
+            return;
+        }
+        const input = this.elements.workspaceBrowser?.querySelector('[data-folder-name-input]');
+        if (input) {
+            input.focus();
+        }
+    }
+
+    async saveWorkspacePath(pathOverride) {
+        if (!this.currentProjectId) return;
+        const input = this.elements.workspaceBrowser?.querySelector('[data-workspace-path-input]');
+        const vaultPath = pathOverride !== undefined ? pathOverride : (input?.value || '').trim();
+        try {
+            const response = await api.updateProjectWorkspace(this.currentProjectId, { vault_path: vaultPath });
+            this.applyWorkspaceResponse(response);
+            this.showNotification('工作区路径已更新', 'success');
+        } catch (error) {
+            console.error('Failed to update workspace:', error);
+            this.showNotification('更新工作区路径失败', 'error');
+        }
+    }
+
+    async createWorkspaceFolder() {
+        if (!this.currentProjectId) return;
+        const input = this.elements.workspaceBrowser?.querySelector('[data-folder-name-input]');
+        const folderName = (input?.value || '').trim();
+        if (!folderName) {
+            input?.focus();
+            return;
+        }
+        try {
+            const response = await api.createWorkspaceFolder(this.currentProjectId, { name: folderName });
+            if (input) input.value = '';
+            this.applyWorkspaceResponse(response);
+            this.showNotification('文件夹已创建', 'success');
+        } catch (error) {
+            console.error('Failed to create workspace folder:', error);
+            this.showNotification('新建文件夹失败', 'error');
+        }
     }
 
     // ========== Analytics ==========
@@ -1441,6 +1566,7 @@ class DashboardUI {
             cli_claude_command: (this.elements.cliClaudeCommandInput?.value || '').trim() || null,
             cli_codex_command: (this.elements.cliCodexCommandInput?.value || '').trim() || null,
             cli_timeout_seconds: parseInt(this.elements.cliTimeoutInput?.value || '120', 10) || 120,
+            workspace_root: (this.elements.workspaceRootInput?.value || '').trim() || null,
         };
 
         const apiKey = (this.elements.llmApiKeyInput?.value || '').trim();
@@ -1453,6 +1579,12 @@ class DashboardUI {
             this.showNotification('设置已保存', 'success');
             if (this.elements.llmApiKeyInput) {
                 this.elements.llmApiKeyInput.value = '';
+            }
+            if (this.currentProjectId) {
+                await this.loadProject(this.currentProjectId);
+            } else if (settings.workspace_root) {
+                this.currentWorkspaceRoot = settings.workspace_root;
+                this.renderFileTree(null, [], this.currentWorkspaceRoot);
             }
             this.closeSettings();
         } catch (error) {
@@ -1483,6 +1615,10 @@ class DashboardUI {
             if (this.elements.cliTimeoutInput) {
                 this.elements.cliTimeoutInput.value = settings.cli_timeout_seconds || 120;
             }
+            if (this.elements.workspaceRootInput) {
+                this.elements.workspaceRootInput.value = settings.workspace_root || '';
+            }
+            this.currentWorkspaceRoot = settings.workspace_root || this.currentWorkspaceRoot;
             if (this.elements.llmApiKeyInput) {
                 this.elements.llmApiKeyInput.placeholder = settings.has_llm_api_key
                     ? '已保存（本地加密）；输入新 key 将覆盖'
@@ -1507,6 +1643,9 @@ class DashboardUI {
             this.changeFontSize(settings.font_size);
             this.updateChatModelSummary();
             this.updateChatContextPreview();
+            if (!this.currentProjectId) {
+                this.renderFileTree(null, [], this.currentWorkspaceRoot);
+            }
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -1561,7 +1700,7 @@ class DashboardUI {
                 // Handle real-time updates
             },
             onError: (error) => {
-                console.error('WebSocket error:', error);
+                console.debug('Pomodoro WebSocket error:', error);
             },
             onClose: () => {
                 console.log('Disconnected from Pomodoro updates');
