@@ -75,9 +75,17 @@
                     </div>
                     <div class="timer-status" id="timerStatus">准备就绪</div>
 
+                    <label class="timer-task-control" for="timerTaskSelect">
+                        <span>当前任务</span>
+                        <select id="timerTaskSelect" class="select-input" disabled>
+                            <option value="">先选择项目和任务</option>
+                        </select>
+                    </label>
+
                     <div class="timer-controls">
                         <button class="btn btn-primary" id="startBtn">开始</button>
                         <button class="btn btn-secondary" id="pauseBtn">暂停</button>
+                        <button class="btn btn-secondary" id="saveTimerBtn" disabled>保存</button>
                         <button class="btn btn-danger" id="resetBtn">重置</button>
                     </div>
 
@@ -217,6 +225,27 @@
                                     <label for="chatContextLimit">上下文(字符)</label>
                                     <input type="number" id="chatContextLimit" class="text-input" value="8000" min="500" step="500">
                                 </div>
+                                <div class="chat-control">
+                                    <label for="chatReasoningEffortSelect">推理强度</label>
+                                    <select id="chatReasoningEffortSelect" class="select-input">
+                                        <option value="low">低</option>
+                                        <option value="medium" selected>中</option>
+                                        <option value="high">高</option>
+                                        <option value="xhigh">超高</option>
+                                    </select>
+                                </div>
+                                <div class="chat-control">
+                                    <label for="chatPermissionModeSelect">代理权限</label>
+                                    <select id="chatPermissionModeSelect" class="select-input">
+                                        <option value="safe">安全模式</option>
+                                        <option value="workspace" selected>工作区权限</option>
+                                        <option value="full">最大权限（需 CLI 支持）</option>
+                                    </select>
+                                </div>
+                                <div class="chat-control">
+                                    <label for="chatWebSearchToggle">WebSearch</label>
+                                    <input type="checkbox" id="chatWebSearchToggle" class="toggle-switch">
+                                </div>
                                 <div class="chat-control chat-control-wide">
                                     <label for="chatSystemPromptInput">自定义系统提示</label>
                                     <input id="chatSystemPromptInput" class="text-input" placeholder="可选：补充约束/风格/偏好">
@@ -245,6 +274,16 @@
                         </div>
 
                         <div class="chat-composer">
+                            <div class="chat-composer-toolbar">
+                                <label class="chat-tool-btn" for="chatAttachmentInput" title="添加附件">
+                                    <i class="fas fa-paperclip"></i>
+                                </label>
+                                <input id="chatAttachmentInput" type="file" multiple hidden>
+                                <div class="chat-attachment-list" id="chatAttachmentList"></div>
+                                <div class="chat-context-meter" id="chatContextMeter" title="上下文使用量">
+                                    <span id="chatContextMeterText">0%</span>
+                                </div>
+                            </div>
                             <textarea id="chatInput" class="chat-input" rows="3" placeholder="输入你的问题..."></textarea>
                             <button class="btn btn-primary" id="chatSendBtn">发送</button>
                         </div>
@@ -462,8 +501,8 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="js/api.js?v=20260510-workspace"></script>
-    <script src="js/ui.js?v=20260510-workspace"></script>
-    <script src="js/app.js?v=20260510-workspace"></script>
+    <script src="js/api.js?v=20260510-linked-state"></script>
+    <script src="js/ui.js?v=20260510-linked-state"></script>
+    <script src="js/app.js?v=20260510-linked-state"></script>
 </body>
 </html>

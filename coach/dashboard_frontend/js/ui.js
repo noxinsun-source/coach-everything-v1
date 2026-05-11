@@ -27,6 +27,10 @@ class DashboardUI {
         this.lastChatUserText = '';
         this.currentProject = null;
         this.currentWorkspaceRoot = '';
+        this.currentTaskId = '';
+        this.currentTasks = [];
+        this.timerSessionStartedAt = null;
+        this.chatAttachments = [];
 
         this.initializeElements();
         this.initializeTimerControls();
@@ -57,6 +61,9 @@ class DashboardUI {
             chatProviderSelect: document.getElementById('chatProviderSelect'),
             chatModelInput: document.getElementById('chatModelInput'),
             chatModeSelect: document.getElementById('chatModeSelect'),
+            chatReasoningEffortSelect: document.getElementById('chatReasoningEffortSelect'),
+            chatPermissionModeSelect: document.getElementById('chatPermissionModeSelect'),
+            chatWebSearchToggle: document.getElementById('chatWebSearchToggle'),
             chatSystemPromptInput: document.getElementById('chatSystemPromptInput'),
             chatContextLimit: document.getElementById('chatContextLimit'),
             chatSettingsBtn: document.getElementById('chatSettingsBtn'),
@@ -73,6 +80,10 @@ class DashboardUI {
             chatInput: document.getElementById('chatInput'),
             chatSendBtn: document.getElementById('chatSendBtn'),
             chatContextPreview: document.getElementById('chatContextPreview'),
+            chatAttachmentInput: document.getElementById('chatAttachmentInput'),
+            chatAttachmentList: document.getElementById('chatAttachmentList'),
+            chatContextMeter: document.getElementById('chatContextMeter'),
+            chatContextMeterText: document.getElementById('chatContextMeterText'),
 
             // Timer
             timerDurationInput: document.getElementById('timerDurationInput'),
@@ -85,8 +96,10 @@ class DashboardUI {
             timerRingPhase: document.getElementById('timerRingPhase'),
             timerDisplay: document.getElementById('timerDisplay'),
             timerStatus: document.getElementById('timerStatus'),
+            timerTaskSelect: document.getElementById('timerTaskSelect'),
             startBtn: document.getElementById('startBtn'),
             pauseBtn: document.getElementById('pauseBtn'),
+            saveTimerBtn: document.getElementById('saveTimerBtn'),
             resetBtn: document.getElementById('resetBtn'),
             expandLeftBtn: document.getElementById('expandLeftBtn'),
 
@@ -160,6 +173,10 @@ class DashboardUI {
             } else {
                 this.currentProjectId = null;
                 this.currentProject = null;
+                this.currentTaskId = '';
+                this.currentTasks = [];
+                this.renderTimerTaskOptions([]);
+                this.renderChatHistory([]);
                 this.elements.emptyState.style.display = 'block';
                 this.elements.projectContent.style.display = 'none';
                 this.renderFileTree(null, [], this.currentWorkspaceRoot);
@@ -215,11 +232,43 @@ class DashboardUI {
         if (this.elements.chatContextLimit) {
             this.elements.chatContextLimit.addEventListener('input', () => this.updateChatContextPreview());
         }
+        if (this.elements.chatReasoningEffortSelect) {
+            this.elements.chatReasoningEffortSelect.addEventListener('change', () => {
+                this.updateChatModelSummary();
+                this.updateChatContextPreview();
+                this.persistAgentRuntimeSettings();
+            });
+        }
+        if (this.elements.chatPermissionModeSelect) {
+            this.elements.chatPermissionModeSelect.addEventListener('change', () => {
+                this.updateChatModelSummary();
+                this.updateChatContextPreview();
+                this.persistAgentRuntimeSettings();
+            });
+        }
+        if (this.elements.chatWebSearchToggle) {
+            this.elements.chatWebSearchToggle.addEventListener('change', () => {
+                this.updateChatContextPreview();
+                this.persistAgentRuntimeSettings();
+            });
+        }
+        if (this.elements.chatAttachmentInput) {
+            this.elements.chatAttachmentInput.addEventListener('change', (e) => this.handleChatAttachments(e.target.files));
+        }
 
         // Timer controls
         this.elements.startBtn.addEventListener('click', () => this.startTimer());
         this.elements.pauseBtn.addEventListener('click', () => this.pauseTimer());
+        if (this.elements.saveTimerBtn) {
+            this.elements.saveTimerBtn.addEventListener('click', () => this.saveCurrentTimerSession('manual'));
+        }
         this.elements.resetBtn.addEventListener('click', () => this.resetTimer());
+        if (this.elements.timerTaskSelect) {
+            this.elements.timerTaskSelect.addEventListener('change', (e) => {
+                this.currentTaskId = e.target.value;
+                this.highlightSelectedTask();
+            });
+        }
         if (this.elements.timerDurationInput) {
             this.elements.timerDurationInput.addEventListener('change', () => this.handleTimerDurationChange());
         }
@@ -392,6 +441,10 @@ class DashboardUI {
             const dashboardData = await api.getProjectDashboard(projectId);
             this.currentProject = dashboardData.project;
             this.currentWorkspaceRoot = dashboardData.workspace_root || this.currentWorkspaceRoot;
+            this.currentTasks = dashboardData.tasks || [];
+            if (this.currentTaskId && !this.currentTasks.some((task) => task.id === this.currentTaskId)) {
+                this.currentTaskId = '';
+            }
 
             // Update project overview
             this.elements.projectName.textContent = dashboardData.project.name;
@@ -408,7 +461,9 @@ class DashboardUI {
             this.updatePomodoroStatsDisplay();
 
             // Render tasks
-            this.renderTasks(dashboardData.tasks);
+            this.renderTasks(this.currentTasks);
+            this.renderTimerTaskOptions(this.currentTasks);
+            this.renderChatHistory(dashboardData.chat_history || []);
 
             // Render coaching notes
             this.renderCoachingNotes(dashboardData.recent_coaching_notes);
@@ -472,6 +527,23 @@ class DashboardUI {
         if (this.elements.chatMessages) {
             this.elements.chatMessages.innerHTML = '';
         }
+        this.chatAttachments = [];
+        this.renderAttachmentList();
+        this.updateChatContextPreview();
+        this.showNotification('已清空当前显示，数据库历史不会被删除', 'info');
+    }
+
+    renderChatHistory(messages) {
+        this.chatHistory = [];
+        if (this.elements.chatMessages) {
+            this.elements.chatMessages.innerHTML = '';
+        }
+        (messages || []).forEach((message) => {
+            const el = this.appendChatMessage(message.role, message.content);
+            if (message.role === 'assistant') {
+                this.attachTaskSyncAction(el, message.content);
+            }
+        });
         this.updateChatContextPreview();
     }
 
@@ -614,8 +686,10 @@ class DashboardUI {
         return html.join('');
     }
 
-    appendChatMessage(role, content) {
-        this.chatHistory.push({ role, content });
+    appendChatMessage(role, content, options = {}) {
+        if (options.track !== false) {
+            this.chatHistory.push({ role, content });
+        }
         if (!this.elements.chatMessages) return;
         const el = document.createElement('div');
         el.className = `chat-message ${role}`;
@@ -636,6 +710,9 @@ class DashboardUI {
         const mode = this.elements.chatModeSelect?.value || 'task_breakdown';
         const system_prompt = (this.elements.chatSystemPromptInput?.value || '').trim() || null;
         const limit = parseInt(this.elements.chatContextLimit?.value || '8000', 10) || 8000;
+        const reasoning_effort = this.elements.chatReasoningEffortSelect?.value || 'medium';
+        const permission_mode = this.elements.chatPermissionModeSelect?.value || 'workspace';
+        const web_search_enabled = Boolean(this.elements.chatWebSearchToggle?.checked);
 
         let total = 0;
         const selected = [];
@@ -647,13 +724,41 @@ class DashboardUI {
             total += size;
         }
 
-        return { provider, model, mode, system_prompt, messages: selected };
+        const attachmentContext = this.getAttachmentContext();
+        if (attachmentContext) {
+            selected.push({ role: 'user', content: attachmentContext });
+        }
+
+        return {
+            provider,
+            model,
+            mode,
+            system_prompt,
+            messages: selected,
+            reasoning_effort,
+            permission_mode,
+            web_search_enabled,
+        };
     }
 
     updateChatContextPreview() {
         if (!this.elements.chatContextPreview) return;
         const payload = this.buildChatPayload();
         this.elements.chatContextPreview.textContent = JSON.stringify(payload, null, 2);
+        this.updateContextMeter(payload);
+    }
+
+    updateContextMeter(payload = this.buildChatPayload()) {
+        const limit = parseInt(this.elements.chatContextLimit?.value || '8000', 10) || 8000;
+        const used = (payload.messages || []).reduce((sum, msg) => sum + (msg.content || '').length, 0);
+        const percent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
+        if (this.elements.chatContextMeter) {
+            this.elements.chatContextMeter.style.setProperty('--context-percent', `${percent}%`);
+            this.elements.chatContextMeter.dataset.level = percent > 90 ? 'danger' : percent > 70 ? 'warning' : 'ok';
+        }
+        if (this.elements.chatContextMeterText) {
+            this.elements.chatContextMeterText.textContent = `${percent}%`;
+        }
     }
 
     updateChatModelSummary() {
@@ -665,7 +770,63 @@ class DashboardUI {
         const modeLabel = this.elements.chatModeSelect
             ? this.elements.chatModeSelect.options[this.elements.chatModeSelect.selectedIndex]?.textContent || '任务拆分'
             : '任务拆分';
-        this.elements.chatModelSummary.textContent = `${providerLabel} · ${model || '默认模型'} · ${modeLabel}`;
+        const effort = this.elements.chatReasoningEffortSelect?.value || 'medium';
+        const effortLabel = {
+            low: '低',
+            medium: '中',
+            high: '高',
+            xhigh: '超高'
+        }[effort] || effort;
+        const permission = this.elements.chatPermissionModeSelect?.value || 'workspace';
+        const permissionLabel = {
+            safe: '安全模式',
+            workspace: '工作区权限',
+            full: '最大权限'
+        }[permission] || permission;
+        this.elements.chatModelSummary.textContent = `${providerLabel} · ${model || '默认模型'} · ${modeLabel} · ${effortLabel} · ${permissionLabel}`;
+    }
+
+    async handleChatAttachments(fileList) {
+        const files = Array.from(fileList || []);
+        const nextAttachments = [];
+        for (const file of files.slice(0, 5)) {
+            if (file.size > 200 * 1024) {
+                nextAttachments.push({
+                    name: file.name,
+                    content: '[文件超过 200KB，未读取内容]',
+                    size: file.size,
+                });
+                continue;
+            }
+            try {
+                const content = await file.text();
+                nextAttachments.push({ name: file.name, content, size: file.size });
+            } catch {
+                nextAttachments.push({ name: file.name, content: '[无法读取该附件内容]', size: file.size });
+            }
+        }
+        this.chatAttachments = nextAttachments;
+        this.renderAttachmentList();
+        this.updateChatContextPreview();
+    }
+
+    renderAttachmentList() {
+        if (!this.elements.chatAttachmentList) return;
+        this.elements.chatAttachmentList.innerHTML = '';
+        this.chatAttachments.forEach((attachment) => {
+            const item = document.createElement('span');
+            item.className = 'chat-attachment-chip';
+            item.textContent = attachment.name;
+            this.elements.chatAttachmentList.appendChild(item);
+        });
+    }
+
+    getAttachmentContext() {
+        if (!this.chatAttachments.length) return '';
+        const blocks = this.chatAttachments.map((attachment) => (
+            `### 附件：${attachment.name}\n${attachment.content || ''}`
+        ));
+        return `以下是用户在网页端添加的附件内容：\n\n${blocks.join('\n\n')}`;
     }
 
     setChatRuntimeState(state, message) {
@@ -797,6 +958,25 @@ class DashboardUI {
         messageEl.appendChild(action);
     }
 
+    async persistChatMessage(role, content) {
+        if (!this.currentProjectId || !content) return;
+        try {
+            await api.saveProjectChatMessage(this.currentProjectId, { role, content });
+        } catch (error) {
+            console.error('Failed to persist chat message:', error);
+        }
+    }
+
+    persistAgentRuntimeSettings() {
+        api.updateSettings({
+            agent_permission_mode: this.elements.chatPermissionModeSelect?.value || 'workspace',
+            reasoning_effort: this.elements.chatReasoningEffortSelect?.value || 'medium',
+            web_search_enabled: Boolean(this.elements.chatWebSearchToggle?.checked),
+        }).catch((error) => {
+            console.error('Failed to persist agent runtime settings:', error);
+        });
+    }
+
     async syncAssistantTasks(content, actionEl, buttonEl) {
         if (!content || !buttonEl) return;
         buttonEl.disabled = true;
@@ -846,7 +1026,16 @@ class DashboardUI {
         if (!text) return;
         this.elements.chatInput.value = '';
         this.lastChatUserText = text;
+        let userContent = text;
+        const attachmentContext = this.getAttachmentContext();
+        if (attachmentContext) {
+            userContent = `${text}\n\n${attachmentContext}`;
+        }
         this.appendChatMessage('user', text);
+        this.persistChatMessage('user', userContent);
+        if (!this.currentProjectId) {
+            this.showNotification('当前未选择项目：本次对话不会持久保存，也不会自动联动任务/工作区', 'warning');
+        }
         this.updateChatContextPreview();
 
         this.isChatRunning = true;
@@ -893,6 +1082,9 @@ class DashboardUI {
             }
             const assistantMessage = this.appendChatMessage('assistant', finalContent || '模型没有返回文本内容。');
             this.attachTaskSyncAction(assistantMessage, finalContent);
+            this.persistChatMessage('assistant', finalContent || '模型没有返回文本内容。');
+            this.chatAttachments = [];
+            this.renderAttachmentList();
             this.updateChatContextPreview();
             this.setChatRuntimeState('done', '回答完成');
             this.hideChatRuntime();
@@ -901,7 +1093,9 @@ class DashboardUI {
             const readableError = this.normalizeChatError(error);
             this.setChatRuntimeState('error', readableError);
             this.addChatTrace(readableError, 'error', 'request');
-            this.appendChatMessage('assistant', `请求失败：${readableError}`);
+            const errorContent = `请求失败：${readableError}`;
+            this.appendChatMessage('assistant', errorContent);
+            this.persistChatMessage('assistant', errorContent);
             this.showNotification('对话请求失败', 'error');
         } finally {
             this.isChatRunning = false;
@@ -924,6 +1118,10 @@ class DashboardUI {
             const taskItem = document.createElement('div');
             taskItem.className = `task-item ${task.status}`;
             taskItem.dataset.status = task.status;
+            taskItem.dataset.taskId = task.id;
+            if (task.id === this.currentTaskId) {
+                taskItem.classList.add('selected');
+            }
 
             const estimatedStr = task.estimated_minutes > 0
                 ? `估计${task.estimated_minutes}分钟`
@@ -997,6 +1195,46 @@ class DashboardUI {
         });
     }
 
+    renderTimerTaskOptions(tasks) {
+        if (!this.elements.timerTaskSelect) return;
+        const select = this.elements.timerTaskSelect;
+        select.innerHTML = '';
+        if (!tasks || tasks.length === 0) {
+            select.disabled = true;
+            select.innerHTML = '<option value="">先同步或创建任务</option>';
+            this.currentTaskId = '';
+            return;
+        }
+
+        select.disabled = false;
+        const emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = '不绑定具体任务';
+        select.appendChild(emptyOption);
+
+        tasks.forEach((task) => {
+            const option = document.createElement('option');
+            option.value = task.id;
+            option.textContent = `${task.title} · ${this.getTaskStatusText(task.status)}`;
+            select.appendChild(option);
+        });
+
+        if (this.currentTaskId && tasks.some((task) => task.id === this.currentTaskId)) {
+            select.value = this.currentTaskId;
+        } else {
+            const firstOpenTask = tasks.find((task) => task.status !== 'completed');
+            this.currentTaskId = firstOpenTask?.id || '';
+            select.value = this.currentTaskId;
+        }
+        this.highlightSelectedTask();
+    }
+
+    highlightSelectedTask() {
+        document.querySelectorAll('.task-item').forEach((item) => {
+            item.classList.toggle('selected', Boolean(this.currentTaskId) && item.dataset.taskId === this.currentTaskId);
+        });
+    }
+
     // ========== Timer Management ==========
 
     startTimer() {
@@ -1009,8 +1247,14 @@ class DashboardUI {
         }
 
         this.isTimerRunning = true;
+        if (this.currentPhase === 'work' && !this.timerSessionStartedAt) {
+            this.timerSessionStartedAt = new Date();
+        }
         this.elements.startBtn.disabled = true;
         this.elements.pauseBtn.disabled = false;
+        if (this.elements.saveTimerBtn) {
+            this.elements.saveTimerBtn.disabled = this.currentPhase !== 'work';
+        }
 
         this.timerInterval = setInterval(() => {
             this.timeRemaining--;
@@ -1031,6 +1275,9 @@ class DashboardUI {
 
         this.elements.startBtn.disabled = false;
         this.elements.pauseBtn.disabled = true;
+        if (this.elements.saveTimerBtn) {
+            this.elements.saveTimerBtn.disabled = this.currentPhase !== 'work';
+        }
 
         this.elements.timerStatus.textContent = '已暂停';
     }
@@ -1043,11 +1290,78 @@ class DashboardUI {
             ? this.focusDurationMinutes * 60
             : this.currentBreakDurationMinutes * 60;
         this.timeRemaining = this.currentPhaseDurationSeconds;
+        this.timerSessionStartedAt = null;
         this.updateTimerDisplay();
 
         this.elements.startBtn.disabled = false;
         this.elements.pauseBtn.disabled = true;
+        if (this.elements.saveTimerBtn) {
+            this.elements.saveTimerBtn.disabled = true;
+        }
         this.elements.timerStatus.textContent = '准备就绪';
+    }
+
+    getElapsedWorkMinutes() {
+        if (this.currentPhase !== 'work') return 0;
+        const elapsedSeconds = Math.max(0, this.currentPhaseDurationSeconds - this.timeRemaining);
+        return Math.max(1, Math.round(elapsedSeconds / 60));
+    }
+
+    async saveCurrentTimerSession(source = 'manual', completed = false) {
+        if (!this.currentProjectId || this.currentPhase !== 'work') {
+            this.showNotification('请先选择项目并处于专注计时', 'warning');
+            return false;
+        }
+
+        const durationMinutes = source === 'completed'
+            ? this.focusDurationMinutes
+            : this.getElapsedWorkMinutes();
+        if (durationMinutes <= 0) {
+            this.showNotification('还没有可保存的专注时长', 'warning');
+            return false;
+        }
+
+        const taskId = this.elements.timerTaskSelect?.value || this.currentTaskId || '';
+        const endTime = new Date();
+        const startTime = this.timerSessionStartedAt || new Date(endTime.getTime() - durationMinutes * 60 * 1000);
+
+        try {
+            await api.logTime({
+                task_id: taskId,
+                project_id: this.currentProjectId,
+                duration_minutes: durationMinutes,
+                pomodoros: source === 'completed' ? 1 : 0,
+                start_time: startTime.toISOString(),
+                end_time: endTime.toISOString(),
+                completed,
+            });
+            this.totalFocusMinutes += durationMinutes;
+            if (source === 'completed') {
+                this.pomodorosCompleted++;
+            }
+            this.updatePomodoroStatsDisplay();
+            await this.loadProject(this.currentProjectId);
+            this.timerSessionStartedAt = null;
+            if (source === 'manual') {
+                clearInterval(this.timerInterval);
+                this.isTimerRunning = false;
+                this.currentPhaseDurationSeconds = this.focusDurationMinutes * 60;
+                this.timeRemaining = this.currentPhaseDurationSeconds;
+                this.elements.startBtn.disabled = false;
+                this.elements.pauseBtn.disabled = true;
+                if (this.elements.saveTimerBtn) {
+                    this.elements.saveTimerBtn.disabled = true;
+                }
+                this.elements.timerStatus.textContent = '已保存';
+                this.updateTimerDisplay();
+            }
+            this.showNotification(`已保存 ${durationMinutes} 分钟专注记录`, 'success');
+            return true;
+        } catch (error) {
+            console.error('Failed to save timer session:', error);
+            this.showNotification('保存专注记录失败', 'error');
+            return false;
+        }
     }
 
     completeTimerPhase() {
@@ -1055,13 +1369,11 @@ class DashboardUI {
         this.isTimerRunning = false;
 
         if (this.currentPhase === 'work') {
-            this.pomodorosCompleted++;
-            this.totalFocusMinutes += this.focusDurationMinutes;
-            this.updatePomodoroStatsDisplay();
+            this.saveCurrentTimerSession('completed').catch(console.error);
             if (this.currentDashboardData?.time_stats) {
                 const stats = this.currentDashboardData.time_stats;
-                stats.total_hours = this.totalFocusMinutes / 60;
-                stats.pomodoros_count = this.pomodorosCompleted;
+                stats.total_hours = (this.totalFocusMinutes + this.focusDurationMinutes) / 60;
+                stats.pomodoros_count = this.pomodorosCompleted + 1;
                 stats.average_duration = this.pomodorosCompleted > 0
                     ? this.totalFocusMinutes / this.pomodorosCompleted
                     : 0;
@@ -1081,16 +1393,6 @@ class DashboardUI {
                 'success'
             );
 
-            // Log the completed pomodoro
-            if (this.currentProjectId) {
-                api.logTime({
-                    task_id: this.currentTaskId || '',
-                    project_id: this.currentProjectId,
-                    duration_minutes: this.focusDurationMinutes,
-                    pomodoros: 1,
-                    completed: false,
-                }).catch(console.error);
-            }
         } else {
             // Break completed
             this.currentPhaseDurationSeconds = this.focusDurationMinutes * 60;
@@ -1103,6 +1405,9 @@ class DashboardUI {
         this.updateTimerDisplay();
         this.elements.startBtn.disabled = false;
         this.elements.pauseBtn.disabled = true;
+        if (this.elements.saveTimerBtn) {
+            this.elements.saveTimerBtn.disabled = true;
+        }
     }
 
     updateTimerDisplay() {
@@ -1567,6 +1872,9 @@ class DashboardUI {
             cli_codex_command: (this.elements.cliCodexCommandInput?.value || '').trim() || null,
             cli_timeout_seconds: parseInt(this.elements.cliTimeoutInput?.value || '120', 10) || 120,
             workspace_root: (this.elements.workspaceRootInput?.value || '').trim() || null,
+            agent_permission_mode: this.elements.chatPermissionModeSelect?.value || 'workspace',
+            reasoning_effort: this.elements.chatReasoningEffortSelect?.value || 'medium',
+            web_search_enabled: Boolean(this.elements.chatWebSearchToggle?.checked),
         };
 
         const apiKey = (this.elements.llmApiKeyInput?.value || '').trim();
@@ -1617,6 +1925,15 @@ class DashboardUI {
             }
             if (this.elements.workspaceRootInput) {
                 this.elements.workspaceRootInput.value = settings.workspace_root || '';
+            }
+            if (this.elements.chatReasoningEffortSelect) {
+                this.elements.chatReasoningEffortSelect.value = settings.reasoning_effort || 'medium';
+            }
+            if (this.elements.chatPermissionModeSelect) {
+                this.elements.chatPermissionModeSelect.value = settings.agent_permission_mode || 'workspace';
+            }
+            if (this.elements.chatWebSearchToggle) {
+                this.elements.chatWebSearchToggle.checked = Boolean(settings.web_search_enabled);
             }
             this.currentWorkspaceRoot = settings.workspace_root || this.currentWorkspaceRoot;
             if (this.elements.llmApiKeyInput) {
@@ -1688,6 +2005,11 @@ class DashboardUI {
 
     selectTask(task) {
         this.currentTaskId = task.id;
+        if (this.elements.timerTaskSelect) {
+            this.elements.timerTaskSelect.value = task.id;
+        }
+        this.highlightSelectedTask();
+        this.showNotification(`番茄钟已绑定：${task.title}`, 'success');
     }
 
     connectPomodoroWebSocket(projectId) {

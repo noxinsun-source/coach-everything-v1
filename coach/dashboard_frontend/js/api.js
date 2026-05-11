@@ -95,6 +95,13 @@ class CoachAPI {
         });
     }
 
+    async saveProjectChatMessage(projectId, messageData) {
+        return this.request(`/api/projects/${projectId}/chat-messages`, {
+            method: 'POST',
+            body: JSON.stringify(messageData),
+        });
+    }
+
     // ========== Task Endpoints ==========
 
     /**

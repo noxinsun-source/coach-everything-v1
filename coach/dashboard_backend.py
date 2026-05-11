@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, HTTPException, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Column, String, DateTime, Integer, Float, create_engine
+from sqlalchemy import Column, String, DateTime, Integer, Float, Text, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import text
@@ -137,6 +137,17 @@ class CoachingNote(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class ChatHistoryRecord(Base):
+    """Persisted project chat messages"""
+    __tablename__ = "chat_messages"
+
+    id = Column(String, primary_key=True)
+    project_id = Column(String)
+    role = Column(String)
+    content = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class UserSettings(Base):
     """User settings"""
     __tablename__ = "user_settings"
@@ -154,6 +165,9 @@ class UserSettings(Base):
     cli_codex_command = Column(String, nullable=True)
     cli_timeout_seconds = Column(Integer, nullable=True)
     workspace_root = Column(String, nullable=True)
+    agent_permission_mode = Column(String, nullable=True)
+    reasoning_effort = Column(String, nullable=True)
+    web_search_enabled = Column(Integer, nullable=True)
 
 
 # Create tables
@@ -168,6 +182,9 @@ def _ensure_user_settings_schema():
         "cli_codex_command": "TEXT",
         "cli_timeout_seconds": "INTEGER",
         "workspace_root": "TEXT",
+        "agent_permission_mode": "TEXT",
+        "reasoning_effort": "TEXT",
+        "web_search_enabled": "INTEGER",
     }
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(user_settings)")).fetchall()
@@ -269,6 +286,7 @@ class DashboardDataResponse(BaseModel):
     gantt_data: dict
     workspace_root: str
     workspace_files: List[dict] = []
+    chat_history: List[dict] = []
 
 
 class ChatMessage(BaseModel):
@@ -282,6 +300,9 @@ class ChatRequest(BaseModel):
     mode: str = "task_breakdown"
     messages: List[ChatMessage]
     system_prompt: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    permission_mode: Optional[str] = None
+    web_search_enabled: Optional[bool] = None
 
 
 class ChatResponse(BaseModel):
@@ -318,12 +339,31 @@ class WorkspaceResponse(BaseModel):
     workspace_files: List[dict]
 
 
+class ChatPersistRequest(BaseModel):
+    role: str
+    content: str
+
+
+class ChatPersistResponse(BaseModel):
+    id: str
+    project_id: str
+    role: str
+    content: str
+    created_at: datetime
+
+
 class _SafeFormatDict(dict):
     def __missing__(self, key):
         return ""
 
 
-def _build_system_prompt(mode: str, custom: Optional[str]) -> str:
+def _build_system_prompt(
+    mode: str,
+    custom: Optional[str],
+    reasoning_effort: Optional[str] = None,
+    permission_mode: Optional[str] = None,
+    web_search_enabled: Optional[bool] = None,
+) -> str:
     if mode == "coding":
         base = "你是一个专业的代码助手。回答要直接、可执行，并在需要时先问清关键信息。"
     elif mode == "research":
@@ -338,7 +378,19 @@ def _build_system_prompt(mode: str, custom: Optional[str]) -> str:
         )
 
     if custom and mode != "custom":
-        return f"{base}\n\n补充要求：{custom}"
+        base = f"{base}\n\n补充要求：{custom}"
+
+    runtime_notes = []
+    if reasoning_effort:
+        runtime_notes.append(f"网页端选择的推理强度：{reasoning_effort}。")
+    if permission_mode:
+        runtime_notes.append(
+            f"网页端选择的代理权限模式：{permission_mode}。如果当前本地 CLI 或系统权限不支持该能力，请明确告诉用户需要到本地 CLI/系统中授权。"
+        )
+    if web_search_enabled:
+        runtime_notes.append("用户在网页端打开了 WebSearch 意图；如果当前执行环境没有 WebSearch 工具，请不要假装已联网，直接说明缺少授权或工具。")
+    if runtime_notes:
+        base = f"{base}\n\n运行配置：{' '.join(runtime_notes)}"
     return base
 
 
@@ -756,6 +808,9 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
 
     tasks = db.query(TaskRecord).filter(TaskRecord.project_id == project_id).all()
     time_logs = db.query(TimeLog).filter(TimeLog.project_id == project_id).all()
+    chat_messages = db.query(ChatHistoryRecord).filter(
+        ChatHistoryRecord.project_id == project_id
+    ).order_by(ChatHistoryRecord.created_at.asc()).all()
     coaching_notes = db.query(CoachingNote).filter(
         CoachingNote.project_id == project_id
     ).order_by(CoachingNote.created_at.desc()).limit(5).all()
@@ -819,6 +874,15 @@ async def get_project_dashboard(project_id: str, db: Session = Depends(get_db)):
         gantt_data=gantt_data,
         workspace_root=str(workspace_root),
         workspace_files=_workspace_files_for_project(project, workspace_root=workspace_root),
+        chat_history=[
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat(),
+            }
+            for msg in chat_messages
+        ],
     )
 
 
@@ -840,6 +904,41 @@ async def create_task(project_id: str, task_data: dict, db: Session = Depends(ge
     db.add(db_task)
     db.commit()
     return {"id": db_task.id, "status": "created"}
+
+
+@app.post("/api/projects/{project_id}/chat-messages", response_model=ChatPersistResponse)
+async def save_project_chat_message(
+    project_id: str,
+    req: ChatPersistRequest,
+    db: Session = Depends(get_db),
+):
+    """Persist one chat message for a project."""
+    from uuid import uuid4
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    role = (req.role or "").strip()
+    if role not in {"user", "assistant", "system"}:
+        raise HTTPException(status_code=400, detail="Invalid chat message role")
+
+    message = ChatHistoryRecord(
+        id=str(uuid4()),
+        project_id=project_id,
+        role=role,
+        content=req.content or "",
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return ChatPersistResponse(
+        id=message.id,
+        project_id=message.project_id,
+        role=message.role,
+        content=message.content,
+        created_at=message.created_at,
+    )
 
 
 @app.patch("/api/projects/{project_id}/workspace", response_model=WorkspaceResponse)
@@ -999,7 +1098,9 @@ async def log_time(log_data: dict, db: Session = Depends(get_db)):
     # Update task actual time
     task = db.query(TaskRecord).filter(TaskRecord.id == log_data.get("task_id")).first()
     if task:
-        task.actual_minutes = log_data.get("duration_minutes")
+        task.actual_minutes = int(task.actual_minutes or 0) + int(log_data.get("duration_minutes") or 0)
+        if task.status == "pending":
+            task.status = "in_progress"
         if log_data.get("completed"):
             task.status = "completed"
             task.completed_at = datetime.now()
@@ -1046,6 +1147,15 @@ async def get_settings(db: Session = Depends(get_db)):
     if not settings.workspace_root:
         settings.workspace_root = str(DEFAULT_WORKSPACE_ROOT)
         changed = True
+    if not settings.agent_permission_mode:
+        settings.agent_permission_mode = "workspace"
+        changed = True
+    if not settings.reasoning_effort:
+        settings.reasoning_effort = "medium"
+        changed = True
+    if settings.web_search_enabled is None:
+        settings.web_search_enabled = 0
+        changed = True
     if changed:
         db.add(settings)
         db.commit()
@@ -1063,6 +1173,9 @@ async def get_settings(db: Session = Depends(get_db)):
         "cli_codex_command": settings.cli_codex_command,
         "cli_timeout_seconds": settings.cli_timeout_seconds,
         "workspace_root": settings.workspace_root or str(DEFAULT_WORKSPACE_ROOT),
+        "agent_permission_mode": settings.agent_permission_mode or "workspace",
+        "reasoning_effort": settings.reasoning_effort or "medium",
+        "web_search_enabled": bool(settings.web_search_enabled),
     }
 
 
@@ -1086,6 +1199,14 @@ async def update_settings(settings_data: dict, db: Session = Depends(get_db)):
             settings_data["workspace_root"] = str(workspace_root)
         else:
             settings_data["workspace_root"] = str(DEFAULT_WORKSPACE_ROOT)
+    if "web_search_enabled" in settings_data:
+        settings_data["web_search_enabled"] = 1 if settings_data.get("web_search_enabled") else 0
+    if "agent_permission_mode" in settings_data:
+        mode = (settings_data.get("agent_permission_mode") or "workspace").strip()
+        settings_data["agent_permission_mode"] = mode if mode in {"safe", "workspace", "full"} else "workspace"
+    if "reasoning_effort" in settings_data:
+        effort = (settings_data.get("reasoning_effort") or "medium").strip()
+        settings_data["reasoning_effort"] = effort if effort in {"low", "medium", "high", "xhigh"} else "medium"
 
     for key, value in settings_data.items():
         if hasattr(settings, key):
@@ -1122,7 +1243,13 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
     model = (req.model or settings.llm_model or "").strip() or None
     timeout_seconds = int(settings.cli_timeout_seconds or 120)
 
-    system_prompt = _build_system_prompt(req.mode, req.system_prompt)
+    system_prompt = _build_system_prompt(
+        req.mode,
+        req.system_prompt,
+        req.reasoning_effort or settings.reasoning_effort,
+        req.permission_mode or settings.agent_permission_mode,
+        req.web_search_enabled if req.web_search_enabled is not None else bool(settings.web_search_enabled),
+    )
     prompt = _render_prompt(system_prompt, req.messages)
 
     try:
@@ -1174,7 +1301,13 @@ async def chat_stream(req: ChatRequest, db: Session = Depends(get_db)):
     provider = (req.provider or settings.llm_provider or "").strip()
     model = (req.model or settings.llm_model or "").strip() or None
     timeout_seconds = int(settings.cli_timeout_seconds or 120)
-    system_prompt = _build_system_prompt(req.mode, req.system_prompt)
+    system_prompt = _build_system_prompt(
+        req.mode,
+        req.system_prompt,
+        req.reasoning_effort or settings.reasoning_effort,
+        req.permission_mode or settings.agent_permission_mode,
+        req.web_search_enabled if req.web_search_enabled is not None else bool(settings.web_search_enabled),
+    )
     prompt = _render_prompt(system_prompt, req.messages)
 
     if provider in ("claude_code", "claude"):
